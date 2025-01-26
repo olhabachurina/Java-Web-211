@@ -18,6 +18,7 @@ public class TimeServlet extends HttpServlet {
     private final Gson gson = new Gson();
 
     @Override
+
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         // Встановлюємо тип контенту у відповіді: JSON з кодуванням UTF-8
         resp.setContentType("application/json;charset=UTF-8");
