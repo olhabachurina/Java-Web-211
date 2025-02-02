@@ -8,8 +8,12 @@
 <html>
 <head>
     <title>Title</title>
+    <title>Redirecting...</title>
+    <!-- автоматичний перехід  на HomeServlet через 3 секунды -->
+    <meta http-equiv="refresh" content="3;url=home" />
 </head>
 <body>
+
 <h1>JSP</h1>
 <h2>Вирази</h2>
 <p><%= 2 + 3 %></p> <!-- Вираз для вивода результату 2 + 3 -->

@@ -1,9 +1,14 @@
 package itstep.learning.rest;
 
-public class RestResponse
-{
+import java.util.Map;
+
+public class RestResponse {
     private int status;
     private String message;
+    private String resourceUrl;
+    private long cacheTime; // время в секундах
+
+    // Геттеры и сеттеры
     public int getStatus() {
         return status;
     }
@@ -22,5 +27,21 @@ public class RestResponse
         return this;
     }
 
+    public String getResourceUrl() {
+        return resourceUrl;
+    }
 
+    public RestResponse setResourceUrl(String resourceUrl) {
+        this.resourceUrl = resourceUrl;
+        return this;
+    }
+
+    public long getCacheTime() {
+        return cacheTime;
+    }
+
+    public RestResponse setCacheTime(long cacheTime) {
+        this.cacheTime = cacheTime;
+        return this;
+    }
 }
