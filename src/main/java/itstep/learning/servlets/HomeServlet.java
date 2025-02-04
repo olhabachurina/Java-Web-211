@@ -3,6 +3,11 @@ package itstep.learning.servlets;
 import com.google.gson.Gson;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import itstep.learning.services.DbService.DbService;
+import itstep.learning.services.hash.HashService;
+import itstep.learning.services.hash.Md5HashService;
+import itstep.learning.services.kdf.KdfService;
+import itstep.learning.services.random.DateTimeService;
 import itstep.learning.services.random.RandomService;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
@@ -17,83 +22,62 @@ import java.util.Map;
 @Singleton
 @WebServlet("/home")
 public class HomeServlet extends HttpServlet {
-    private final Gson gson = new Gson(); // Для створення JSON-відповідей
-    private final RandomService randomService; // Сервіс для генерації випадкових чисел
-    String connectionString = "jdbc:mysql://localhost:3306/Java221?useSSL=false&serverTimezone=UTC";
+    private final DbService dbService;
+    private final RandomService randomService;
+    private final DateTimeService dateTimeService;
+    private final KdfService kdfService;
 
-    // Ін’єкція RandomService через Guice
+    // Конструктор с аннотацией @Inject (Guice)
     @Inject
-    public HomeServlet(RandomService randomService) {
+    public HomeServlet(DbService dbService, RandomService randomService, DateTimeService dateTimeService, KdfService kdfService) {
+        this.dbService = dbService;
         this.randomService = randomService;
+        this.dateTimeService = dateTimeService;
+        this.kdfService = kdfService;
     }
 
-    // Конструктор за замовчуванням (вимагається контейнером сервлетів)
+    // Конструктор по умолчанию (необходим для Tomcat)
     public HomeServlet() {
-        this.randomService = null; // Тимчасове значення, Guice виконає ін’єкцію
+        this.dbService = null;
+        this.randomService = null;
+        this.dateTimeService = null;
+        this.kdfService = null;
     }
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        String message;
-        int status;
-        String currentTime = null;
-        String databases = null; // Для збереження списку баз даних
-        int randomNumber = randomService.randomInt(); // Генерація випадкового числа
-
-        // Налаштування CORS
         resp.setContentType("application/json;charset=UTF-8");
         setCorsHeaders(resp);
 
-        try {
-            // Підключення драйвера MySQL
-            Class.forName("com.mysql.cj.jdbc.Driver");
+        String currentTime = null;
+        String databases = null;
+        int randomNumber = randomService != null ? randomService.randomInt() : -1; // Защита от NullPointerException
+        String hashedMessage = kdfService != null ? kdfService.dk("123", "456") : "null";
+        String message;
 
-            // Підключення до бази даних
-            try (Connection connection = DriverManager.getConnection(connectionString, "user221", "pass221")) {
-                if (connection != null) {
-                    // 1. Отримання поточного часу
-                    currentTime = fetchCurrentTime(connection);
-
-                    // 2. Отримання списку баз даних
-                    databases = fetchDatabases(connection);
-
-                    message = "Запит виконано успішно. Згенероване випадкове число: " + randomNumber;
-                    status = 200;
-                } else {
-                    message = "З'єднання дорівнює null. Згенероване випадкове число: " + randomNumber;
-                    status = 500;
-                }
+        try (Connection connection = dbService != null ? dbService.getConnection() : null) {
+            if (connection != null) {
+                currentTime = fetchCurrentTime(connection);
+                databases = fetchDatabases(connection);
+                message = "Запит виконано успішно. Згенероване випадкове число: " + randomNumber;
+            } else {
+                message = "Не вдалося встановити з'єднання з базою даних.";
             }
-        } catch (ClassNotFoundException ex) {
-            message = "JDBC драйвер не знайдено: " + ex.getMessage();
-            status = 500;
-        } catch (SQLException ex) {
-            message = "Помилка бази даних: " + ex.getMessage();
-            status = 500;
+        } catch (SQLException e) {
+            message = "Помилка бази даних: " + e.getMessage();
         }
 
-        // Формування JSON-відповіді
-        sendJsonResponse(resp, status, message, currentTime, databases, randomNumber);
+        Map<String, Object> response = new HashMap<>();
+        response.put("currentTime", currentTime);
+        response.put("databases", databases);
+        response.put("randomNumber", randomNumber);
+        response.put("message", message);
+        response.put("status", 200);
+        response.put("hashedMessage", hashedMessage);
+
+        resp.getWriter().print(new Gson().toJson(response));
     }
 
-    @Override
-    protected void doOptions(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        setCorsHeaders(resp); // Налаштування заголовків для preflight-запитів
-        resp.setStatus(HttpServletResponse.SC_OK);
-    }
-
-    /**
-     * Встановлює CORS-заголовки.
-     */
-    private void setCorsHeaders(HttpServletResponse resp) {
-        resp.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
-        resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        resp.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    }
-
-    /**
-     * Отримує поточний час з бази даних.
-     */
     private String fetchCurrentTime(Connection connection) throws SQLException {
         String query = "SELECT CURRENT_TIMESTAMP";
         try (Statement statement = connection.createStatement();
@@ -105,9 +89,6 @@ public class HomeServlet extends HttpServlet {
         return null;
     }
 
-    /**
-     * Отримує список баз даних.
-     */
     private String fetchDatabases(Connection connection) throws SQLException {
         String query = "SHOW DATABASES";
         StringBuilder dbBuilder = new StringBuilder();
@@ -123,21 +104,12 @@ public class HomeServlet extends HttpServlet {
         return dbBuilder.toString();
     }
 
-    /**
-     * Відправляє JSON-відповідь клієнту.
-     */
-    private void sendJsonResponse(HttpServletResponse resp, int status, String message, String currentTime, String databases, int randomNumber) throws IOException {
-        Map<String, Object> response = new HashMap<>();
-        response.put("status", status);
-        response.put("message", message);
-        response.put("currentTime", currentTime);
-        response.put("databases", databases);
-        response.put("randomNumber", randomNumber);
-
-        resp.getWriter().print(gson.toJson(response));
+    private void setCorsHeaders(HttpServletResponse resp) {
+        resp.setHeader("Access-Control-Allow-Origin", "*");
+        resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        resp.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 }
-
 /**
  * IoC (Inversion of Control) — Інверсія управління
  * Архітектурний патерн, за яким управління (життєвим циклом об'єктів)
