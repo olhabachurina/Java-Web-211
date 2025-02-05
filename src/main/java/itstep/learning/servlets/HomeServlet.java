@@ -3,6 +3,7 @@ package itstep.learning.servlets;
 import com.google.gson.Gson;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import itstep.learning.dal.dao.DataContext;
 import itstep.learning.services.DbService.DbService;
 import itstep.learning.services.hash.HashService;
 import itstep.learning.services.hash.Md5HashService;
@@ -19,29 +20,39 @@ import java.sql.*;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
+import com.google.gson.Gson;
+
+
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 @Singleton
 @WebServlet("/home")
 public class HomeServlet extends HttpServlet {
-    private final DbService dbService;
+    private static final Logger LOGGER = Logger.getLogger(HomeServlet.class.getName());
+
     private final RandomService randomService;
     private final DateTimeService dateTimeService;
     private final KdfService kdfService;
+    private final DataContext dataContext;
 
-    // Конструктор с аннотацией @Inject (Guice)
+    // Конструктор с аннотацией @Inject для внедрения зависимостей
     @Inject
-    public HomeServlet(DbService dbService, RandomService randomService, DateTimeService dateTimeService, KdfService kdfService) {
-        this.dbService = dbService;
+    public HomeServlet(RandomService randomService, DateTimeService dateTimeService, KdfService kdfService, DataContext dataContext) {
         this.randomService = randomService;
         this.dateTimeService = dateTimeService;
         this.kdfService = kdfService;
+        this.dataContext = dataContext;
     }
 
     // Конструктор по умолчанию (необходим для Tomcat)
     public HomeServlet() {
-        this.dbService = null;
         this.randomService = null;
         this.dateTimeService = null;
         this.kdfService = null;
+        this.dataContext = null;
     }
 
     @Override
@@ -49,59 +60,54 @@ public class HomeServlet extends HttpServlet {
         resp.setContentType("application/json;charset=UTF-8");
         setCorsHeaders(resp);
 
-        String currentTime = null;
-        String databases = null;
-        int randomNumber = randomService != null ? randomService.randomInt() : -1; // Защита от NullPointerException
-        String hashedMessage = kdfService != null ? kdfService.dk("123", "456") : "null";
-        String message;
-
-        try (Connection connection = dbService != null ? dbService.getConnection() : null) {
-            if (connection != null) {
-                currentTime = fetchCurrentTime(connection);
-                databases = fetchDatabases(connection);
-                message = "Запит виконано успішно. Згенероване випадкове число: " + randomNumber;
-            } else {
-                message = "Не вдалося встановити з'єднання з базою даних.";
-            }
-        } catch (SQLException e) {
-            message = "Помилка бази даних: " + e.getMessage();
-        }
-
         Map<String, Object> response = new HashMap<>();
-        response.put("currentTime", currentTime);
-        response.put("databases", databases);
-        response.put("randomNumber", randomNumber);
-        response.put("message", message);
-        response.put("status", 200);
-        response.put("hashedMessage", hashedMessage);
+        int statusCode = 200;
 
+        try {
+            // Проверка зависимостей
+            if (randomService == null || dateTimeService == null || kdfService == null || dataContext == null) {
+                throw new IllegalStateException("Не удалось загрузить все зависимости через Guice.");
+            }
+
+            // Генерация случайного числа
+            int randomNumber = randomService.randomInt();
+
+            // Хэширование сообщения
+            String hashedMessage = kdfService.dk("123", "456");
+
+            // Создание таблиц через DataContext
+            boolean tablesCreated = dataContext.installTables();
+            String tablesMessage = tablesCreated
+                    ? "install ok"
+                    : "Ошибка при создании таблиц. Проверьте логи для деталей.";
+            response.put("tablesMessage", tablesMessage);
+
+            // Получение данных через UserDao из DataContext
+            String currentTime = dataContext.getUserDao().fetchCurrentTime();
+            String databases = dataContext.getUserDao().fetchDatabases();
+
+            // Формирование успешного ответа
+            response.put("currentTime", currentTime != null ? currentTime : "Не удалось получить текущее время");
+            response.put("databases", databases != null ? databases : "Не удалось получить список баз данных");
+            response.put("randomNumber", randomNumber);
+            response.put("hashedMessage", hashedMessage);
+            response.put("tablesMessage", tablesMessage);
+            response.put("message", "Запит виконано успішно.");
+
+        } catch (IllegalStateException e) {
+            LOGGER.log(Level.SEVERE, "Ошибка загрузки зависимостей", e);
+            response.put("message", "Ошибка загрузки зависимостей: " + e.getMessage());
+            statusCode = 500;
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Неожиданная ошибка", e);
+            response.put("message", "Виникла несподівана помилка: " + e.getMessage());
+            statusCode = 500;
+        }
+
+        // Формирование окончательного ответа
+        response.put("status", statusCode);
+        resp.setStatus(statusCode);
         resp.getWriter().print(new Gson().toJson(response));
-    }
-
-    private String fetchCurrentTime(Connection connection) throws SQLException {
-        String query = "SELECT CURRENT_TIMESTAMP";
-        try (Statement statement = connection.createStatement();
-             ResultSet resultSet = statement.executeQuery(query)) {
-            if (resultSet.next()) {
-                return resultSet.getString(1);
-            }
-        }
-        return null;
-    }
-
-    private String fetchDatabases(Connection connection) throws SQLException {
-        String query = "SHOW DATABASES";
-        StringBuilder dbBuilder = new StringBuilder();
-        try (Statement statement = connection.createStatement();
-             ResultSet resultSet = statement.executeQuery(query)) {
-            while (resultSet.next()) {
-                if (dbBuilder.length() > 0) {
-                    dbBuilder.append(", ");
-                }
-                dbBuilder.append(resultSet.getString(1));
-            }
-        }
-        return dbBuilder.toString();
     }
 
     private void setCorsHeaders(HttpServletResponse resp) {
@@ -110,6 +116,8 @@ public class HomeServlet extends HttpServlet {
         resp.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 }
+
+
 /**
  * IoC (Inversion of Control) — Інверсія управління
  * Архітектурний патерн, за яким управління (життєвим циклом об'єктів)
