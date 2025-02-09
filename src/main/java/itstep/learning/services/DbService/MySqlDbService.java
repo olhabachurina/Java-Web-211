@@ -8,16 +8,15 @@ import java.sql.SQLException;
 
 @Singleton
 public class MySqlDbService implements DbService {
-    private Connection connection; // Поле для хранения подключения
+    private Connection connection;
 
     @Override
     public Connection getConnection() {
-        if (connection == null) { // Если подключение ещё не установлено
+        if (connection == null) {
             try {
-                // Настройки подключения
-                String url = "jdbc:mysql://localhost:3306/Java221?useSSL=false&serverTimezone=UTC";
-                String user = "user221";
-                String password = "pass221";
+                String url = "jdbc:mysql://localhost:3306/java221?useSSL=false&serverTimezone=UTC";
+                String user = "user221"; // Проверьте правильность имени пользователя
+                String password = "pass221"; // Проверьте правильность пароля
 
                 // Установка драйвера и соединения
                 Class.forName("com.mysql.cj.jdbc.Driver");
@@ -30,6 +29,15 @@ public class MySqlDbService implements DbService {
                 System.err.println("Ошибка подключения к базе данных: " + ex.getMessage());
             }
         }
-        return connection; // Возвращаем соединение
+        return connection;
+    }
+
+    private boolean isConnectionClosed() {
+        try {
+            return connection == null || connection.isClosed();
+        } catch (SQLException e) {
+            System.err.println("Ошибка проверки соединения: " + e.getMessage());
+            return true;
+        }
     }
 }

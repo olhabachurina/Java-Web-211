@@ -68,22 +68,28 @@ public class RegisterServlet extends HttpServlet {
                 connection.setAutoCommit(false); // Начало транзакции
                 LOGGER.info("Підключення до бази даних встановлено");
 
-                // Сохранение пользователя
-                long userId = saveUserToDatabase(connection, user);
+                try {
+                    // Сохранение пользователя
+                    long userId = saveUserToDatabase(connection, user);
 
-                // Сохранение email-адресов
-                for (String email : user.getEmails()) {
-                    saveEmailToDatabase(connection, userId, email);
+                    // Сохранение email-адресов
+                    for (String email : user.getEmails()) {
+                        saveEmailToDatabase(connection, userId, email);
+                    }
+
+                    // Сохранение телефонов
+                    for (String phone : user.getPhones()) {
+                        savePhoneToDatabase(connection, userId, phone);
+                    }
+
+                    connection.commit(); // Завершение транзакции
+                    LOGGER.info("Транзакцію успішно завершено");
+                    sendJsonResponse(resp, 201, "Користувач успішно зареєстрований!");
+                } catch (SQLException ex) {
+                    connection.rollback(); // Откат транзакции
+                    LOGGER.log(Level.SEVERE, "Помилка транзакції: відкат виконано", ex);
+                    sendJsonResponse(resp, 500, "Помилка бази даних: відкат виконано");
                 }
-
-                // Сохранение телефонов
-                for (String phone : user.getPhones()) {
-                    savePhoneToDatabase(connection, userId, phone);
-                }
-
-                connection.commit(); // Завершение транзакции
-                LOGGER.info("Транзакцію успішно завершено");
-                sendJsonResponse(resp, 201, "Користувач успішно зареєстрований!");
             }
         } catch (JsonSyntaxException ex) {
             LOGGER.log(Level.WARNING, "Помилка парсингу JSON", ex);
@@ -104,7 +110,6 @@ public class RegisterServlet extends HttpServlet {
         resp.setStatus(HttpServletResponse.SC_OK);
     }
 
-    // Метод для проверки данных пользователя
     private boolean isUserDataInvalid(User user) {
         if (user == null) {
             LOGGER.warning("Користувач є null");
@@ -139,7 +144,6 @@ public class RegisterServlet extends HttpServlet {
         return false;
     }
 
-    // Метод для проверки формата даты
     private boolean isBirthdateValid(String birthdate) {
         try {
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
@@ -151,7 +155,6 @@ public class RegisterServlet extends HttpServlet {
         }
     }
 
-    // Метод для сохранения пользователя в базу данных
     private long saveUserToDatabase(Connection connection, User user) throws SQLException {
         String query = "INSERT INTO users (name, login, city, address, birthdate, password) VALUES (?, ?, ?, ?, ?, ?)";
         try (PreparedStatement statement = connection.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
@@ -172,7 +175,6 @@ public class RegisterServlet extends HttpServlet {
         }
     }
 
-    // Метод для сохранения email в базу данных
     private void saveEmailToDatabase(Connection connection, long userId, String email) throws SQLException {
         String query = "INSERT INTO user_emails (user_id, email) VALUES (?, ?)";
         try (PreparedStatement statement = connection.prepareStatement(query)) {
@@ -182,7 +184,6 @@ public class RegisterServlet extends HttpServlet {
         }
     }
 
-    // Метод для сохранения телефона в базу данных
     private void savePhoneToDatabase(Connection connection, long userId, String phone) throws SQLException {
         String query = "INSERT INTO user_phones (user_id, phone) VALUES (?, ?)";
         try (PreparedStatement statement = connection.prepareStatement(query)) {
@@ -192,7 +193,6 @@ public class RegisterServlet extends HttpServlet {
         }
     }
 
-    // Метод для настройки CORS
     private void setupResponseHeaders(HttpServletResponse resp) {
         resp.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
         resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -200,12 +200,10 @@ public class RegisterServlet extends HttpServlet {
         resp.setHeader("Access-Control-Allow-Credentials", "true");
     }
 
-    // Метод для отправки JSON-ответа
     private void sendJsonResponse(HttpServletResponse resp, int statusCode, String message) throws IOException {
         resp.setStatus(statusCode);
         try (PrintWriter writer = resp.getWriter()) {
             writer.print("{\"message\": \"" + message + "\"}");
         }
     }
-
 }

@@ -30,6 +30,7 @@ import java.util.logging.Logger;
 
 @Singleton
 @WebServlet("/home")
+
 public class HomeServlet extends HttpServlet {
     private static final Logger LOGGER = Logger.getLogger(HomeServlet.class.getName());
 
@@ -38,7 +39,6 @@ public class HomeServlet extends HttpServlet {
     private final KdfService kdfService;
     private final DataContext dataContext;
 
-    // Конструктор с аннотацией @Inject для внедрения зависимостей
     @Inject
     public HomeServlet(RandomService randomService, DateTimeService dateTimeService, KdfService kdfService, DataContext dataContext) {
         this.randomService = randomService;
@@ -47,7 +47,6 @@ public class HomeServlet extends HttpServlet {
         this.dataContext = dataContext;
     }
 
-    // Конструктор по умолчанию (необходим для Tomcat)
     public HomeServlet() {
         this.randomService = null;
         this.dateTimeService = null;
@@ -64,13 +63,18 @@ public class HomeServlet extends HttpServlet {
         int statusCode = 200;
 
         try {
-            // Проверка зависимостей
             if (randomService == null || dateTimeService == null || kdfService == null || dataContext == null) {
                 throw new IllegalStateException("Не удалось загрузить все зависимости через Guice.");
             }
 
             // Генерация случайного числа
             int randomNumber = randomService.randomInt();
+
+            // Генерация случайной строки
+            String randomString = randomService.randomString(10);
+
+            // Генерация случайного имени файла
+            String randomFileName = randomService.randomFileName(12);
 
             // Хэширование сообщения
             String hashedMessage = kdfService.dk("123", "456");
@@ -90,8 +94,9 @@ public class HomeServlet extends HttpServlet {
             response.put("currentTime", currentTime != null ? currentTime : "Не удалось получить текущее время");
             response.put("databases", databases != null ? databases : "Не удалось получить список баз данных");
             response.put("randomNumber", randomNumber);
+            response.put("randomString", randomString);
+            response.put("randomFileName", randomFileName);
             response.put("hashedMessage", hashedMessage);
-            response.put("tablesMessage", tablesMessage);
             response.put("message", "Запит виконано успішно.");
 
         } catch (IllegalStateException e) {
@@ -104,7 +109,6 @@ public class HomeServlet extends HttpServlet {
             statusCode = 500;
         }
 
-        // Формирование окончательного ответа
         response.put("status", statusCode);
         resp.setStatus(statusCode);
         resp.getWriter().print(new Gson().toJson(response));
@@ -116,7 +120,6 @@ public class HomeServlet extends HttpServlet {
         resp.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 }
-
 
 /**
  * IoC (Inversion of Control) — Інверсія управління
