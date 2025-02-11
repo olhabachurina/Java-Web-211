@@ -5,6 +5,8 @@ import com.google.inject.Singleton;
 import itstep.learning.services.DbService.DbService;
 
 import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.logging.Logger;
 
 @Singleton
@@ -41,6 +43,35 @@ public class DataContext {
             }
         } catch (Exception e) {
             logger.severe("Помилка під час встановлення таблиць: " + e.getMessage());
+            return false;
+        }
+    }
+    public void initializeRolesAndAccess() {
+        logger.info("Инициализация ролей и данных доступа...");
+        try {
+            // Создание таблиц, если их нет
+            userDao.installUsers();
+            userDao.installUserAccess();
+            userDao.installUserRoles();
+
+            // Инициализация ролей
+            initializeDefaultRoles();
+            logger.info("Инициализация ролей завершена успешно.");
+        } catch (Exception e) {
+            logger.severe("Ошибка при инициализации ролей: " + e.getMessage());
+        }
+    }
+    public boolean initializeDefaultRoles() {
+        String sql = "INSERT IGNORE INTO user_roles (id, description, canCreate, canRead, canUpdate, canDelete) VALUES " +
+                "('admin', 'Administrator', true, true, true, true), " +
+                "('editor', 'Editor', false, true, true, false), " +
+                "('viewer', 'Viewer', false, true, false, false)";
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate(sql);
+            logger.info("Роли успешно добавлены или уже существуют.");
+            return true;
+        } catch (SQLException e) {
+            logger.severe("Ошибка при добавлении ролей: " + e.getMessage());
             return false;
         }
     }

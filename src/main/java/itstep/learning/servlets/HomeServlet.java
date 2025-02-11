@@ -66,7 +66,7 @@ public class HomeServlet extends HttpServlet {
             if (randomService == null || dateTimeService == null || kdfService == null || dataContext == null) {
                 throw new IllegalStateException("Не удалось загрузить все зависимости через Guice.");
             }
-
+            dataContext.initializeRolesAndAccess();
             // Генерация случайного числа
             int randomNumber = randomService.randomInt();
 

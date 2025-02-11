@@ -3,6 +3,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import itstep.learning.models.User;
 import itstep.learning.rest.RestResponse;
+import itstep.learning.rest.RestService;
 import jakarta.inject.Singleton;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
@@ -13,11 +14,14 @@ import org.mindrot.jbcrypt.BCrypt;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -30,6 +34,29 @@ public class RegisterServlet extends HttpServlet {
     private static final String DB_PASSWORD = "pass221";
     private final Gson gson = new Gson();
 
+    // Метод обработки GET-запроса
+    @Override
+
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        LOGGER.info("GET-запит отримано");
+
+        RestResponse restResponse = new RestResponse()
+                .setResourceUrl("GET /register")
+                .setCacheTime(600)
+                .setMeta(Map.of(
+                        "dataType", "object",
+                        "read", "GET /register",
+                        "update", "PUT /register",
+                        "delete", "DELETE /register"
+                ))
+                .setData("Добро пожаловать! Это GET-ответ.");
+
+        // Отправка JSON-ответа
+        resp.setContentType("application/json");
+        resp.setCharacterEncoding("UTF-8");
+        resp.getWriter().write(restResponse.toJson());
+    }
+    // Метод обработки POST-запроса (регистрация пользователя)
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         LOGGER.info("POST-запит отримано");
@@ -103,58 +130,20 @@ public class RegisterServlet extends HttpServlet {
         }
     }
 
-    @Override
-    protected void doOptions(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        setupResponseHeaders(resp); // Настройка CORS для preflight-запросов
-        LOGGER.info("Оброблено preflight-запит (OPTIONS)");
-        resp.setStatus(HttpServletResponse.SC_OK);
-    }
-
+    // Проверка валидности данных пользователя
     private boolean isUserDataInvalid(User user) {
-        if (user == null) {
-            LOGGER.warning("Користувач є null");
-            return true;
-        }
-        if (user.getName() == null || user.getName().isEmpty()) {
-            LOGGER.warning("Ім'я користувача порожнє або null");
-            return true;
-        }
-        if (user.getLogin() == null || user.getLogin().isEmpty()) {
-            LOGGER.warning("Логін користувача порожній або null");
-            return true;
-        }
-        if (user.getEmails() == null || user.getEmails().isEmpty() ||
-                user.getEmails().stream().anyMatch(email -> email == null || email.isEmpty())) {
-            LOGGER.warning("Список email користувача порожній або містить порожні значення");
-            return true;
-        }
-        if (user.getPhones() == null || user.getPhones().isEmpty() ||
-                user.getPhones().stream().anyMatch(phone -> phone == null || phone.isEmpty())) {
-            LOGGER.warning("Список телефонів користувача порожній або містить порожні значення");
-            return true;
-        }
-        if (!isBirthdateValid(user.getBirthdate())) {
-            LOGGER.warning("Некоректна дата народження: " + user.getBirthdate());
-            return true;
-        }
-        if (user.getPassword() == null || user.getPassword().isEmpty() || user.getPassword().length() < 6) {
-            LOGGER.warning("Пароль користувача порожній або занадто короткий");
+        if (user == null || user.getName() == null || user.getName().isEmpty() ||
+                user.getLogin() == null || user.getLogin().isEmpty() ||
+                user.getEmails() == null || user.getEmails().isEmpty() ||
+                user.getPhones() == null || user.getPhones().isEmpty() ||
+                user.getBirthdate() == null || user.getBirthdate().isEmpty() ||
+                user.getPassword() == null || user.getPassword().length() < 6) {
             return true;
         }
         return false;
     }
 
-    private boolean isBirthdateValid(String birthdate) {
-        try {
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-            sdf.setLenient(false);
-            sdf.parse(birthdate);
-            return true;
-        } catch (ParseException e) {
-            return false;
-        }
-    }
-
+    // Вспомогательные методы для сохранения в БД
     private long saveUserToDatabase(Connection connection, User user) throws SQLException {
         String query = "INSERT INTO users (name, login, city, address, birthdate, password) VALUES (?, ?, ?, ?, ?, ?)";
         try (PreparedStatement statement = connection.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
@@ -193,6 +182,7 @@ public class RegisterServlet extends HttpServlet {
         }
     }
 
+    // Вспомогательные методы для CORS и JSON-ответа
     private void setupResponseHeaders(HttpServletResponse resp) {
         resp.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
         resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -202,8 +192,8 @@ public class RegisterServlet extends HttpServlet {
 
     private void sendJsonResponse(HttpServletResponse resp, int statusCode, String message) throws IOException {
         resp.setStatus(statusCode);
-        try (PrintWriter writer = resp.getWriter()) {
-            writer.print("{\"message\": \"" + message + "\"}");
-        }
+        resp.setContentType("application/json");
+        resp.setCharacterEncoding("UTF-8");
+        resp.getWriter().write("{\"message\": \"" + message + "\"}");
     }
 }
