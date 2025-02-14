@@ -1,10 +1,13 @@
 package itstep.learning.servlets;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
+import itstep.learning.dal.dao.UserDao;
 import itstep.learning.models.User;
 import itstep.learning.rest.RestResponse;
 import itstep.learning.rest.RestService;
 import jakarta.inject.Singleton;
+import jakarta.servlet.ServletConfig;
+import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
@@ -18,7 +21,18 @@ import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
+import java.util.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
+import org.mindrot.jbcrypt.BCrypt;
+
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.sql.*;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -29,171 +43,129 @@ import java.util.logging.Logger;
 @WebServlet("/register")
 public class RegisterServlet extends HttpServlet {
     private static final Logger LOGGER = Logger.getLogger(RegisterServlet.class.getName());
-    private static final String CONNECTION_STRING = "jdbc:mysql://127.0.0.1:3306/Java221?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true";
-    private static final String DB_USER = "user221";
-    private static final String DB_PASSWORD = "pass221";
     private final Gson gson = new Gson();
+    private UserDao userDao;
 
-    // Метод обработки GET-запроса
     @Override
-
-    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        LOGGER.info("GET-запит отримано");
-
-        RestResponse restResponse = new RestResponse()
-                .setResourceUrl("GET /register")
-                .setCacheTime(600)
-                .setMeta(Map.of(
-                        "dataType", "object",
-                        "read", "GET /register",
-                        "update", "PUT /register",
-                        "delete", "DELETE /register"
-                ))
-                .setData("Добро пожаловать! Это GET-ответ.");
-
-        // Отправка JSON-ответа
-        resp.setContentType("application/json");
-        resp.setCharacterEncoding("UTF-8");
-        resp.getWriter().write(restResponse.toJson());
+    public void init(ServletConfig config) throws ServletException {
+        super.init(config);
+        ServletContext context = config.getServletContext();
+        Connection connection = (Connection) context.getAttribute("dbConnection");
+        Logger logger = (Logger) context.getAttribute("appLogger");
+        userDao = new UserDao(connection, logger);
     }
-    // Метод обработки POST-запроса (регистрация пользователя)
-    @Override
-    protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        LOGGER.info("POST-запит отримано");
 
-        // Настройка CORS
+    /**
+     * ✅ Метод GET: Получение списка пользователей
+     */
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        LOGGER.info("GET-запит отримано: повертаємо список користувачів");
         setupResponseHeaders(resp);
 
-        // Логирование заголовков запроса
-        req.getHeaderNames().asIterator().forEachRemaining(header -> {
-            LOGGER.info("Заголовок: " + header + " = " + req.getHeader(header));
-        });
+        List<User> users = userDao.getAllUsers(); // Получаем список пользователей из БД
+        String jsonResponse = gson.toJson(users);
+        sendJsonResponse(resp, 200, jsonResponse);
+    }
 
-        // Чтение тела запроса
-        String body = new String(req.getInputStream().readAllBytes());
+    /**
+     * ✅ Метод POST: Регистрация нового пользователя
+     */
+    @Override
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        LOGGER.info("POST-запит на реєстрацію отримано");
+        setupResponseHeaders(resp);
+
+        // Читаем тело запроса
+        String body = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         LOGGER.info("Тіло запиту: " + body);
 
         try {
-            // Парсинг JSON в объект User
             User user = gson.fromJson(body, User.class);
-            LOGGER.info("Розпарсений об'єкт користувача: " + user);
+            LOGGER.info("Розпарсений користувач: " + user);
 
-            // Проверка валидности данных
             if (isUserDataInvalid(user)) {
-                LOGGER.warning("Невалідні дані користувача: " + user);
-                sendJsonResponse(resp, 400, "Невірні дані користувача");
+                sendJsonResponse(resp, 400, "{\"message\": \"Невалідні дані користувача\"}");
                 return;
             }
 
-            // Хеширование пароля
+            // Хешируем пароль
             String hashedPassword = BCrypt.hashpw(user.getPassword(), BCrypt.gensalt(12));
             user.setPassword(hashedPassword);
-            LOGGER.info("Хешування пароля завершено");
 
-            // Работа с базой данных
-            try (Connection connection = DriverManager.getConnection(CONNECTION_STRING, DB_USER, DB_PASSWORD)) {
-                connection.setAutoCommit(false); // Начало транзакции
-                LOGGER.info("Підключення до бази даних встановлено");
+            // Генерируем UUID для user_id
+            user.setId(UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE);
+            user.setEmailConfirmed(false);
+            user.setEmailConfirmationToken(UUID.randomUUID().toString());
+            user.setTokenCreatedAt(new Timestamp(System.currentTimeMillis()));
 
-                try {
-                    // Сохранение пользователя
-                    long userId = saveUserToDatabase(connection, user);
+            // Добавляем пользователя в БД
+            userDao.addUser(user);
 
-                    // Сохранение email-адресов
-                    for (String email : user.getEmails()) {
-                        saveEmailToDatabase(connection, userId, email);
-                    }
-
-                    // Сохранение телефонов
-                    for (String phone : user.getPhones()) {
-                        savePhoneToDatabase(connection, userId, phone);
-                    }
-
-                    connection.commit(); // Завершение транзакции
-                    LOGGER.info("Транзакцію успішно завершено");
-                    sendJsonResponse(resp, 201, "Користувач успішно зареєстрований!");
-                } catch (SQLException ex) {
-                    connection.rollback(); // Откат транзакции
-                    LOGGER.log(Level.SEVERE, "Помилка транзакції: відкат виконано", ex);
-                    sendJsonResponse(resp, 500, "Помилка бази даних: відкат виконано");
-                }
-            }
-        } catch (JsonSyntaxException ex) {
-            LOGGER.log(Level.WARNING, "Помилка парсингу JSON", ex);
-            sendJsonResponse(resp, 400, "Некоректний формат JSON");
-        } catch (SQLException ex) {
-            LOGGER.log(Level.SEVERE, "Помилка бази даних", ex);
-            sendJsonResponse(resp, 500, "Помилка бази даних");
-        } catch (Exception ex) {
-            LOGGER.log(Level.SEVERE, "Невідома помилка сервера", ex);
-            sendJsonResponse(resp, 500, "Помилка сервера");
+            LOGGER.info("Користувач успішно зареєстрований!");
+            sendJsonResponse(resp, 201, "{\"message\": \"Користувач успішно зареєстрований!\"}");
+        } catch (JsonSyntaxException e) {
+            LOGGER.log(Level.WARNING, "Помилка парсингу JSON", e);
+            sendJsonResponse(resp, 400, "{\"message\": \"Некоректний формат JSON\"}");
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Помилка бази даних", e);
+            sendJsonResponse(resp, 500, "{\"message\": \"Помилка бази даних\"}");
         }
     }
 
-    // Проверка валидности данных пользователя
+    /**
+     * Метод OPTIONS: Обрабатывает CORS-запросы
+     */
+    @Override
+    protected void doOptions(HttpServletRequest req, HttpServletResponse resp) {
+        setupResponseHeaders(resp);
+        resp.setStatus(HttpServletResponse.SC_OK);
+    }
+    public void addUser(User user) throws SQLException {
+        String sql = "INSERT INTO users (name, login, city, address, birthdate, password) VALUES (?, ?, ?, ?, ?, ?)";
+
+        try (Connection connection = DriverManager.getConnection("jdbc:mysql://127.0.0.1:3306/Java221?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true", "user221", "pass221");
+             PreparedStatement stmt = connection.prepareStatement(sql)) {
+
+            stmt.setString(1, user.getName());
+            stmt.setString(2, user.getLogin());
+            stmt.setString(3, user.getCity());
+            stmt.setString(4, user.getAddress());
+            stmt.setString(5, user.getBirthdate());
+            stmt.setString(6, user.getPassword());
+            stmt.executeUpdate();
+        }
+    }
+    /**
+     * Валидация данных пользователя
+     */
     private boolean isUserDataInvalid(User user) {
-        if (user == null || user.getName() == null || user.getName().isEmpty() ||
-                user.getLogin() == null || user.getLogin().isEmpty() ||
-                user.getEmails() == null || user.getEmails().isEmpty() ||
-                user.getPhones() == null || user.getPhones().isEmpty() ||
-                user.getBirthdate() == null || user.getBirthdate().isEmpty() ||
-                user.getPassword() == null || user.getPassword().length() < 6) {
-            return true;
-        }
-        return false;
+        return user == null || user.getName() == null || user.getName().isEmpty()
+                || user.getLogin() == null || user.getLogin().isEmpty()
+                || user.getEmails() == null || user.getEmails().isEmpty()
+                || user.getPhones() == null || user.getPhones().isEmpty()
+                || user.getBirthdate() == null || user.getBirthdate().isEmpty()
+                || user.getPassword() == null || user.getPassword().length() < 6;
     }
 
-    // Вспомогательные методы для сохранения в БД
-    private long saveUserToDatabase(Connection connection, User user) throws SQLException {
-        String query = "INSERT INTO users (name, login, city, address, birthdate, password) VALUES (?, ?, ?, ?, ?, ?)";
-        try (PreparedStatement statement = connection.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
-            statement.setString(1, user.getName());
-            statement.setString(2, user.getLogin());
-            statement.setString(3, user.getCity());
-            statement.setString(4, user.getAddress());
-            statement.setString(5, user.getBirthdate());
-            statement.setString(6, user.getPassword());
-            statement.executeUpdate();
-
-            ResultSet generatedKeys = statement.getGeneratedKeys();
-            if (generatedKeys.next()) {
-                return generatedKeys.getLong(1);
-            } else {
-                throw new SQLException("Не вдалося отримати ID нового користувача");
-            }
-        }
-    }
-
-    private void saveEmailToDatabase(Connection connection, long userId, String email) throws SQLException {
-        String query = "INSERT INTO user_emails (user_id, email) VALUES (?, ?)";
-        try (PreparedStatement statement = connection.prepareStatement(query)) {
-            statement.setLong(1, userId);
-            statement.setString(2, email);
-            statement.executeUpdate();
-        }
-    }
-
-    private void savePhoneToDatabase(Connection connection, long userId, String phone) throws SQLException {
-        String query = "INSERT INTO user_phones (user_id, phone) VALUES (?, ?)";
-        try (PreparedStatement statement = connection.prepareStatement(query)) {
-            statement.setLong(1, userId);
-            statement.setString(2, phone);
-            statement.executeUpdate();
-        }
-    }
-
-    // Вспомогательные методы для CORS и JSON-ответа
+    /**
+     * Настройка заголовков CORS
+     */
     private void setupResponseHeaders(HttpServletResponse resp) {
-        resp.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
-        resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        resp.setHeader("Access-Control-Allow-Origin", "*");
+        resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE");
         resp.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        resp.setHeader("Access-Control-Max-Age", "3600");
         resp.setHeader("Access-Control-Allow-Credentials", "true");
     }
 
-    private void sendJsonResponse(HttpServletResponse resp, int statusCode, String message) throws IOException {
+    /**
+     * Универсальный метод отправки JSON-ответа
+     */
+    private void sendJsonResponse(HttpServletResponse resp, int statusCode, String jsonResponse) throws IOException {
         resp.setStatus(statusCode);
         resp.setContentType("application/json");
         resp.setCharacterEncoding("UTF-8");
-        resp.getWriter().write("{\"message\": \"" + message + "\"}");
+        resp.getWriter().write(jsonResponse);
     }
 }

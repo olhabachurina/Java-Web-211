@@ -3,9 +3,7 @@ package itstep.learning.dal.dao;
 import itstep.learning.models.User;
 
 import java.sql.*;
-import java.util.Base64;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -16,108 +14,189 @@ public class UserDao {
 
     public UserDao(Connection connection, Logger logger) {
         this.connection = connection;
-        this.logger = logger;
+        this.logger = (logger != null) ? logger : Logger.getLogger(UserDao.class.getName());
     }
 
-    // Создание таблицы `users`
+    /**
+     * ✅ Добавление пользователя + запись в `users_access`
+     */
+    public void addUser(User user) throws SQLException {
+        String userSql = "INSERT INTO users (name, login, city, address, birthdate, password) " +
+                "VALUES (?, ?, ?, ?, ?, ?)";
+        String accessSql = "INSERT INTO users_access (user_access_id, user_id, role_id, login, salt, dk) " +
+                "VALUES (?, ?, ?, ?, ?, ?)";
+
+        if (connection == null) {
+            throw new SQLException("❌ Ошибка: Нет подключения к базе данных.");
+        }
+
+        connection.setAutoCommit(false);
+        try (PreparedStatement userStmt = connection.prepareStatement(userSql, Statement.RETURN_GENERATED_KEYS);
+             PreparedStatement accessStmt = connection.prepareStatement(accessSql)) {
+
+            // 🟢 Вставляем пользователя в `users`
+            userStmt.setString(1, user.getName());
+            userStmt.setString(2, user.getLogin());
+            userStmt.setString(3, user.getCity());
+            userStmt.setString(4, user.getAddress());
+            userStmt.setString(5, user.getBirthdate());
+            userStmt.setString(6, user.getPassword());
+            userStmt.executeUpdate();
+
+            // ✅ Получаем сгенерированный `user_id`
+            ResultSet generatedKeys = userStmt.getGeneratedKeys();
+            if (!generatedKeys.next()) {
+                throw new SQLException("❌ Ошибка: Не удалось получить `user_id`.");
+            }
+            long userId = generatedKeys.getLong(1);
+            user.setId(userId);
+
+            // ✅ Генерируем данные для `users_access`
+            String userAccessId = UUID.randomUUID().toString();
+            String salt = UUID.randomUUID().toString().substring(0, 16);
+            String dk = Base64.getEncoder().encodeToString(user.getLogin().getBytes());
+
+            // 🟢 Вставляем данные в `users_access`
+            accessStmt.setString(1, userAccessId);
+            accessStmt.setLong(2, userId);
+            accessStmt.setString(3, "USER");
+            accessStmt.setString(4, user.getLogin());
+            accessStmt.setString(5, salt);
+            accessStmt.setString(6, dk);
+            accessStmt.executeUpdate();
+
+            connection.commit();
+            logger.info("✅ Пользователь добавлен в `users` и `users_access`.");
+        } catch (SQLException ex) {
+            connection.rollback();
+            logger.severe("❌ Ошибка при добавлении пользователя: " + ex.getMessage());
+            throw ex;
+        } finally {
+            connection.setAutoCommit(true);
+        }
+    }
+
+    /**
+     * ✅ Получение всех пользователей + email'ы + телефоны
+     */
+    public List<User> getAllUsers() {
+        List<User> users = new ArrayList<>();
+        String sql = "SELECT u.id, u.name, u.login, e.email " +
+                "FROM users u " +
+                "LEFT JOIN user_emails e ON u.id = e.user_id";
+
+        if (connection == null) {
+            logger.severe("❌ Ошибка: Нет подключения к базе данных.");
+            return users;
+        }
+
+        try (Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+
+            Map<Long, User> userMap = new HashMap<>();
+
+            while (rs.next()) {
+                long userId = rs.getLong("id"); //
+
+                // Используем map, чтобы не дублировать пользователей
+                User user = userMap.computeIfAbsent(userId, key -> {
+                    try {
+                        return new User(key, rs.getString("name"), rs.getString("login")); //
+                    } catch (SQLException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+
+
+                String email = rs.getString("email");
+                if (email != null) {
+                    user.getEmails().add(email);
+                }
+            }
+
+            users.addAll(userMap.values());
+        } catch (SQLException ex) {
+            logger.severe("❌ Ошибка при получении списка пользователей: " + ex.getMessage());
+            throw new RuntimeException("Ошибка базы данных", ex);
+        }
+
+        return users;
+    }
+
+    /**
+     * ✅ Создание таблицы `users`
+     */
     public boolean installUsers() {
         String sql = "CREATE TABLE IF NOT EXISTS users (" +
-                "user_id CHAR(36) PRIMARY KEY, " +
+                "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
                 "name VARCHAR(128) NOT NULL, " +
-                "email VARCHAR(256), " +
-                "phone VARCHAR(32)" +
+                "login VARCHAR(128) NOT NULL UNIQUE, " +
+                "city VARCHAR(128), " +
+                "address VARCHAR(256), " +
+                "birthdate DATE, " +
+                "password VARCHAR(256) NOT NULL, " +
+                "registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP " +
                 ") Engine=InnoDB DEFAULT CHARSET=utf8mb4";
 
-        return executeStatement(sql, "Таблица `users` успешно создана.");
+        return executeStatement(sql, "✅ Таблица `users` создана.");
     }
 
-    // Создание таблицы `users_access`
+    /**
+     * ✅ Создание таблицы `users_access`
+     */
     public boolean installUserAccess() {
         String sql = "CREATE TABLE IF NOT EXISTS users_access (" +
                 "user_access_id CHAR(36) PRIMARY KEY, " +
-                "user_id CHAR(36) NOT NULL, " +
+                "user_id BIGINT NOT NULL, " +
                 "role_id VARCHAR(16) NOT NULL, " +
                 "login VARCHAR(128) NOT NULL UNIQUE, " +
                 "salt CHAR(16) NOT NULL, " +
                 "dk CHAR(20) NOT NULL, " +
-                "UNIQUE(user_id, role_id)" +
+                "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE " +
                 ") Engine=InnoDB DEFAULT CHARSET=utf8mb4";
 
-        return executeStatement(sql, "Таблица `users_access` успешно создана.");
+        return executeStatement(sql, "✅ Таблица `users_access` создана.");
     }
 
-    // Создание таблицы `user_roles`
+    /**
+     * ✅ Создание таблицы `user_roles`
+     */
     public boolean installUserRoles() {
         String sql = "CREATE TABLE IF NOT EXISTS user_roles (" +
                 "id VARCHAR(16) PRIMARY KEY, " +
-                "description VARCHAR(256) NOT NULL, " +
-                "canCreate BOOLEAN NOT NULL, " +
-                "canRead BOOLEAN NOT NULL, " +
-                "canUpdate BOOLEAN NOT NULL, " +
-                "canDelete BOOLEAN NOT NULL" +
+                "description VARCHAR(256) NOT NULL " +
                 ") Engine=InnoDB DEFAULT CHARSET=utf8mb4";
 
-        return executeStatement(sql, "Таблица `user_roles` успешно создана.");
+        return executeStatement(sql, "✅ Таблица `user_roles` создана.");
     }
 
-    // Добавление пользователя и связанных данных
-    public User addUser(User user) {
-        // Проверяем и генерируем ID пользователя, если отсутствует
-        if (user.getId() == 0) {
-            user.setId(Long.parseLong(UUID.randomUUID().toString().replaceAll("-", "").substring(0, 15)));
+    /**
+     * ✅ Выполнение SQL-запросов
+     */
+    private boolean executeStatement(String sql, String successMessage) {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate(sql);
+            logger.info(successMessage);
+            return true;
+        } catch (SQLException e) {
+            logger.severe("❌ Ошибка выполнения SQL: " + e.getMessage());
+            return false;
         }
+    }
 
-        String userSql = "INSERT INTO users (name, login, city, address, birthdate, password) VALUES (?, ?, ?, ?, ?, ?)";
-        try (PreparedStatement userPrep = this.connection.prepareStatement(userSql, Statement.RETURN_GENERATED_KEYS)) {
-            // Добавление записи в таблицу `users`
-            userPrep.setString(1, user.getName());
-            userPrep.setString(2, user.getLogin());
-            userPrep.setString(3, user.getCity());
-            userPrep.setString(4, user.getAddress());
-            userPrep.setString(5, user.getBirthdate());
-            userPrep.setString(6, user.getPassword());
-            userPrep.executeUpdate();
-
-            // Получение сгенерированного user_id
-            ResultSet keys = userPrep.getGeneratedKeys();
-            if (keys.next()) {
-                user.setId(keys.getLong(1));
-            } else {
-                throw new SQLException("Не удалось получить ID пользователя");
-            }
-
-            // Добавление записи в таблицу `users_access`
-            String accessSql = "INSERT INTO users_access (user_access_id, user_id, role_id, login, salt, dk) VALUES (?, ?, ?, ?, ?, ?)";
-            try (PreparedStatement accessPrep = this.connection.prepareStatement(accessSql)) {
-                // Генерация уникальных значений
-                String userAccessId = UUID.randomUUID().toString();
-                String roleId = "viewer"; // Назначаем роль по умолчанию
-                String salt = UUID.randomUUID().toString().substring(0, 16);
-                String dk = Base64.getEncoder().encodeToString(user.getLogin().getBytes());
-
-                // Устанавливаем параметры
-                accessPrep.setString(1, userAccessId);
-                accessPrep.setLong(2, user.getId());
-                accessPrep.setString(3, roleId);
-                accessPrep.setString(4, user.getLogin());
-                accessPrep.setString(5, salt);
-                accessPrep.setString(6, dk);
-                accessPrep.executeUpdate();
-            }
-
-            return user;
-        } catch (SQLException ex) {
-            logger.warning("Ошибка при добавлении пользователя: " + ex.getMessage());
+    public String fetchCurrentTime() {
+        return fetchSingleValue("SELECT CURRENT_TIMESTAMP", "❌ Ошибка при получении текущего времени");
+    }
+    private String fetchSingleValue(String sql, String errorMessage) {
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery(sql)) {
+            return resultSet.next() ? resultSet.getString(1) : null;
+        } catch (SQLException e) {
+            logger.severe(errorMessage + ": " + e.getMessage());
             return null;
         }
     }
 
-    // Получение текущего времени
-    public String fetchCurrentTime() {
-        return fetchSingleValue("SELECT CURRENT_TIMESTAMP", "Ошибка при получении времени");
-    }
-
-    // Получение списка баз данных
     public String fetchDatabases() {
         String sql = "SHOW DATABASES";
         StringBuilder databases = new StringBuilder();
@@ -125,45 +204,13 @@ public class UserDao {
         try (Statement statement = connection.createStatement();
              ResultSet resultSet = statement.executeQuery(sql)) {
             while (resultSet.next()) {
-                if (databases.length() > 0) {
-                    databases.append(", ");
-                }
+                if (databases.length() > 0) databases.append(", ");
                 databases.append(resultSet.getString(1));
             }
+            return databases.toString();
         } catch (SQLException e) {
-            logger.severe("Ошибка при получении списка баз данных: " + e.getMessage());
+            logger.severe("❌ Ошибка при получении списка баз данных: " + e.getMessage());
+            return null;
         }
-
-        return databases.toString();
-    }
-
-    // Вспомогательный метод: выполнение SQL-запросов на создание таблиц
-    private boolean executeStatement(String sql, String successMessage) {
-        try (Statement statement = connection.createStatement()) {
-            statement.executeUpdate(sql);
-            logger.info(successMessage);
-            return true;
-        } catch (SQLException e) {
-            logger.severe("Ошибка выполнения SQL: " + e.getMessage());
-            return false;
-        }
-    }
-
-    // Вспомогательный метод: выполнение запросов, возвращающих одно значение
-    private String fetchSingleValue(String sql, String errorMessage) {
-        try (Statement statement = connection.createStatement();
-             ResultSet resultSet = statement.executeQuery(sql)) {
-            if (resultSet.next()) {
-                return resultSet.getString(1);
-            }
-        } catch (SQLException e) {
-            logger.severe(errorMessage + ": " + e.getMessage());
-        }
-        return null;
-    }
-
-    // Вспомогательный метод: получение первого элемента из списка или null
-    private String getFirstOrNull(List<String> list) {
-        return (list != null && !list.isEmpty()) ? list.get(0) : null;
     }
 }
