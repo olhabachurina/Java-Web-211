@@ -50,13 +50,17 @@ public class RegisterServlet extends HttpServlet {
     public void init(ServletConfig config) throws ServletException {
         super.init(config);
         ServletContext context = config.getServletContext();
+
+        // Из контекста Tomcat берем уже созданное Connection (если вы его там сохраняете)
         Connection connection = (Connection) context.getAttribute("dbConnection");
-        Logger logger = (Logger) context.getAttribute("appLogger");
-        userDao = new UserDao(connection, logger);
+        Logger appLogger = (Logger) context.getAttribute("appLogger");
+
+        // Создаём DAO
+        userDao = new UserDao(connection, appLogger);
     }
 
     /**
-     * ✅ Метод GET: Получение списка пользователей
+     * GET: Получение списка пользователей
      */
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -69,44 +73,89 @@ public class RegisterServlet extends HttpServlet {
     }
 
     /**
-     * ✅ Метод POST: Регистрация нового пользователя
+     * POST: Регистрация нового пользователя
      */
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         LOGGER.info("POST-запит на реєстрацію отримано");
         setupResponseHeaders(resp);
 
-        // Читаем тело запроса
+        // 1) Считываем тело запроса
         String body = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        LOGGER.info("Тіло запиту: " + body);
+        LOGGER.info("🔎 [RegisterServlet] Тіло запиту: " + body);
 
         try {
+            // 2) Парсим JSON в User
             User user = gson.fromJson(body, User.class);
-            LOGGER.info("Розпарсений користувач: " + user);
+            LOGGER.info("🔎 [RegisterServlet] Розпарсений користувач: " + user);
 
+            // 3) Детально выводим поля
+            LOGGER.info("🔎 user.name=" + user.getName()
+                    + ", user.login=" + user.getLogin()
+                    + ", user.emails=" + user.getEmails()
+                    + ", user.phones=" + user.getPhones()
+                    + ", user.city=" + user.getCity()
+                    + ", user.address=" + user.getAddress()
+                    + ", user.birthdate=" + user.getBirthdate()
+                    + ", user.password (len)="
+                    + (user.getPassword() == null ? 0 : user.getPassword().length()));
+
+            // 4) Проверяем валидацию
             if (isUserDataInvalid(user)) {
+                LOGGER.warning("❌ Невалідні дані користувача, відхиляємо запит.");
                 sendJsonResponse(resp, 400, "{\"message\": \"Невалідні дані користувача\"}");
                 return;
             }
 
-            // Хешируем пароль
+            // 5) Хешируем пароль
             String hashedPassword = BCrypt.hashpw(user.getPassword(), BCrypt.gensalt(12));
             user.setPassword(hashedPassword);
 
-            // Генерируем UUID для user_id
-            user.setId(UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE);
+            // 6) Генерируем userId и вспомогательные поля
+            long newUserId = UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
+            user.setId(newUserId);
             user.setEmailConfirmed(false);
             user.setEmailConfirmationToken(UUID.randomUUID().toString());
             user.setTokenCreatedAt(new Timestamp(System.currentTimeMillis()));
 
-            // Добавляем пользователя в БД
+            LOGGER.info("🔎 [RegisterServlet] Генерируем user_id=" + newUserId);
+
+            // 7) Вызываем DAO-метод для сохранения в БД
             userDao.addUser(user);
 
-            LOGGER.info("Користувач успішно зареєстрований!");
+            // 8) Отправляем ответ
+            LOGGER.info("✅ [RegisterServlet] Користувач успішно зареєстрований!");
             sendJsonResponse(resp, 201, "{\"message\": \"Користувач успішно зареєстрований!\"}");
+
         } catch (JsonSyntaxException e) {
-            LOGGER.log(Level.WARNING, "Помилка парсингу JSON", e);
+            LOGGER.log(Level.WARNING, "❌ [RegisterServlet] Помилка парсингу JSON", e);
             sendJsonResponse(resp, 400, "{\"message\": \"Некоректний формат JSON\"}");
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "❌ [RegisterServlet] Помилка бази даних", e);
+            sendJsonResponse(resp, 500, "{\"message\": \"Помилка бази даних\"}");
+        }
+    }
+
+    /**
+     * DELETE: Удаление пользователя
+     */
+    @Override
+    protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        LOGGER.info("DELETE-запит на видалення користувача отримано");
+        setupResponseHeaders(resp);
+
+        String userIdStr = req.getParameter("id");
+        if (userIdStr == null || userIdStr.isEmpty()) {
+            sendJsonResponse(resp, 400, "{\"message\": \"Не передано ID користувача\"}");
+            return;
+        }
+
+        try {
+            long userId = Long.parseLong(userIdStr);
+            userDao.deleteUser(userId);
+            sendJsonResponse(resp, 200, "{\"message\": \"Користувача успішно видалено\"}");
+        } catch (NumberFormatException e) {
+            sendJsonResponse(resp, 400, "{\"message\": \"Невірний формат ID\"}");
         } catch (SQLException e) {
             LOGGER.log(Level.SEVERE, "Помилка бази даних", e);
             sendJsonResponse(resp, 500, "{\"message\": \"Помилка бази даних\"}");
@@ -114,33 +163,20 @@ public class RegisterServlet extends HttpServlet {
     }
 
     /**
-     * Метод OPTIONS: Обрабатывает CORS-запросы
+     * Метод OPTIONS (CORS)
      */
     @Override
     protected void doOptions(HttpServletRequest req, HttpServletResponse resp) {
         setupResponseHeaders(resp);
         resp.setStatus(HttpServletResponse.SC_OK);
     }
-    public void addUser(User user) throws SQLException {
-        String sql = "INSERT INTO users (name, login, city, address, birthdate, password) VALUES (?, ?, ?, ?, ?, ?)";
 
-        try (Connection connection = DriverManager.getConnection("jdbc:mysql://127.0.0.1:3306/Java221?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true", "user221", "pass221");
-             PreparedStatement stmt = connection.prepareStatement(sql)) {
-
-            stmt.setString(1, user.getName());
-            stmt.setString(2, user.getLogin());
-            stmt.setString(3, user.getCity());
-            stmt.setString(4, user.getAddress());
-            stmt.setString(5, user.getBirthdate());
-            stmt.setString(6, user.getPassword());
-            stmt.executeUpdate();
-        }
-    }
     /**
-     * Валидация данных пользователя
+     * Проверка валидности данных пользователя
      */
     private boolean isUserDataInvalid(User user) {
-        return user == null || user.getName() == null || user.getName().isEmpty()
+        return user == null
+                || user.getName() == null || user.getName().isEmpty()
                 || user.getLogin() == null || user.getLogin().isEmpty()
                 || user.getEmails() == null || user.getEmails().isEmpty()
                 || user.getPhones() == null || user.getPhones().isEmpty()

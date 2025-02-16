@@ -15,6 +15,7 @@ public class ServletConfig extends ServletModule {
         serve("/home").with(HomeServlet.class);
         serve("/time").with(TimeServlet.class);
         serve("/random").with(RandomServlet.class);
+        serve("/user").with(UserServlet.class);
     }
 }
 

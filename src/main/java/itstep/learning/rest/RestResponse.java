@@ -13,7 +13,7 @@ public class RestResponse {
     private Map<String, String> meta;
     private Object data;
 
-    private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+    public static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
     // Конструктор по умолчанию
     public RestResponse() {
