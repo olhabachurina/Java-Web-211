@@ -8,6 +8,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 
+
+
 public class UserDao {
     private final Connection connection;
     private final Logger logger;
@@ -20,7 +22,7 @@ public class UserDao {
 
     /**
      * ✅ Добавление пользователя (users), создание записи в users_access,
-     *    а также сохранение email'ов (user_emails) и телефонов (user_phones).
+     * а также сохранение email'ов (user_emails) и телефонов (user_phones).
      */
     public void addUser(User user) throws SQLException {
         // 1) Проверяем, есть ли уже пользователь с таким логином
@@ -161,7 +163,7 @@ public class UserDao {
 
     /**
      * ✅ Получение всех пользователей + их e‑mail’ы + телефоны
-     *    Через двойной LEFT JOIN.
+     * Через двойной LEFT JOIN.
      */
     public List<User> getAllUsers() {
         List<User> users = new ArrayList<>();
@@ -232,6 +234,21 @@ public class UserDao {
         return users;
     }
 
+    public void updateUserPhones(long userId, List<String> phones) throws SQLException {
+        try (PreparedStatement deleteStmt = connection.prepareStatement("DELETE FROM user_phones WHERE user_id = ?");
+             PreparedStatement insertStmt = connection.prepareStatement("INSERT INTO user_phones (user_id, phone) VALUES (?, ?)")) {
+
+            deleteStmt.setLong(1, userId);
+            deleteStmt.executeUpdate();
+
+            for (String phone : phones) {
+                insertStmt.setLong(1, userId);
+                insertStmt.setString(2, phone);
+                insertStmt.executeUpdate();
+            }
+        }
+    }
+
     /**
      * ✅  users
      */
@@ -268,7 +285,7 @@ public class UserDao {
     }
 
     /**
-     *  user_roles
+     * user_roles
      */
     public boolean installUserRoles() {
         String sql = "CREATE TABLE IF NOT EXISTS user_roles (" +
@@ -349,27 +366,31 @@ public class UserDao {
             return null;
         }
     }
-    public void updateUser(User user) throws SQLException {
-        if (!isUserExists(user.getId())) {
-            logger.warning("⚠ Користувача з id=" + user.getId() + " не знайдено.");
-            return;
-        }
 
-        String sql = "UPDATE users SET name = ?, city = ?, address = ?, birthdate = ? WHERE id = ?";
+    public void updateUser(User user) throws SQLException {
+        String sql = "UPDATE users SET name = ?, login = ?, city = ?, address = ?, birthdate = ? WHERE id = ?";
+
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setString(1, user.getName());
-            stmt.setString(2, user.getCity());
-            stmt.setString(3, user.getAddress());
-            stmt.setString(4, user.getBirthdate());
-            stmt.setLong(5, user.getId());
-            stmt.executeUpdate();
+            stmt.setString(2, user.getLogin());  // ✅ Теперь login передается правильно
+            stmt.setString(3, user.getCity());
+            stmt.setString(4, user.getAddress());
+
+            if (user.getBirthdate() == null || user.getBirthdate().isEmpty()) {
+                stmt.setNull(5, Types.DATE);
+            } else {
+                stmt.setDate(5, java.sql.Date.valueOf(user.getBirthdate()));
+            }
+
+            stmt.setLong(6, user.getId());  // ✅ Исправленный индекс (id = 6-й параметр)
+
+            int affectedRows = stmt.executeUpdate();
+            if (affectedRows == 0) {
+                throw new SQLException("❌ Ошибка: Пользователь не обновлен, возможно, не найден!");
+            }
         }
-
-        updateEmails(user.getId(), user.getEmails());
-        updatePhones(user.getId(), user.getPhones());
-
-        logger.info("✅ Користувач оновлений: " + user.getLogin());
     }
+
     private boolean isUserExists(Long userId) throws SQLException {
         String sql = "SELECT COUNT(*) FROM users WHERE id = ?";
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
@@ -381,21 +402,31 @@ public class UserDao {
     }
 
     public void deleteUser(Long userId) throws SQLException {
+        logger.info("🔍 Проверяем, существует ли пользователь ID=" + userId);
+
         if (!isUserExists(userId)) {
-            logger.warning("⚠ Користувач з id=" + userId + " не знайдений.");
+            logger.warning("⚠ Пользователь с ID=" + userId + " не найден.");
             return;
         }
 
+        logger.info("🗑 Удаляем e-mail'ы...");
         deleteEmails(userId);
+
+        logger.info("🗑 Удаляем телефоны...");
         deletePhones(userId);
 
         String sql = "DELETE FROM users WHERE id = ?";
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setLong(1, userId);
-            stmt.executeUpdate();
+            int affectedRows = stmt.executeUpdate();
+            if (affectedRows > 0) {
+                logger.info("✅ Пользователь ID=" + userId + " успешно удален.");
+            } else {
+                logger.warning("⚠ Не удалось удалить пользователя ID=" + userId);
+            }
         }
-        logger.info("✅ Користувач з id=" + userId + " успішно видалений.");
     }
+
     /**
      * Удаление Email'ов пользователя
      */
@@ -407,6 +438,7 @@ public class UserDao {
         }
         logger.info("   -> [deleteEmails] user_id=" + userId + " удалено.");
     }
+
     private void updateEmails(Long userId, List<String> emails) throws SQLException {
         deleteEmails(userId);
         saveEmails(userId, emails);
@@ -416,6 +448,7 @@ public class UserDao {
         deletePhones(userId);
         savePhones(userId, phones);
     }
+
     /**
      * Удаление Телефонов пользователя
      */
@@ -427,29 +460,21 @@ public class UserDao {
         }
         logger.info("   -> [deletePhones] user_id=" + userId + " удалено.");
     }
+
     private List<String> parseList(String data) {
         return (data != null && !data.isEmpty()) ? Arrays.asList(data.split("; ")) : new ArrayList<>();
     }
 
     public User getUserById(long userId) throws SQLException {
-        String sql = "SELECT id, name, login, city, address, birthdate FROM users WHERE id = ?";
-
-        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+        String query = "SELECT id, name, login FROM users WHERE id = ?";
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
             stmt.setLong(1, userId);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return new User(
-                            rs.getLong("id"),
-                            rs.getString("name"),
-                            rs.getString("login"),
-                            rs.getString("city"),
-                            rs.getString("address"),
-                            rs.getString("birthdate"),
-                            "USER" // Роль по умолчанию
-                    );
+                    return new User(rs.getLong("id"), rs.getString("name"), rs.getString("login"));
                 }
             }
         }
-        return null; // Если пользователь не найден
+        return null;
     }
 }

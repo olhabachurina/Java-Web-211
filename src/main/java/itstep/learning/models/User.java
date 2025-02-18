@@ -41,7 +41,18 @@ public class User {
         this.birthdate = birthdate;
         this.role = role;
     }
-
+    public User(long id, String name, String login, String city, String address,
+                String birthdate, String roleId, String emails, List<String> phones) {
+        this.id = id;
+        this.name = name;
+        this.login = login;
+        this.city = city;
+        this.address = address;
+        this.birthdate = birthdate;
+        this.role = roleId;
+        this.emails = Arrays.asList(emails.split(","));
+        this.phones = phones;
+    }
     // ✅ Геттеры и сеттеры
     public long getId() { return id; }
     public void setId(long id) { this.id = id; }
@@ -118,9 +129,13 @@ public class User {
     /**
      * ✅ Безопасное получение `String`, обрабатывая `NULL`.
      */
-    private static String getSafeString(ResultSet rs, String column) throws SQLException {
-        String value = rs.getString(column);
-        return (value != null) ? value : "";
+    private static String getSafeString(ResultSet rs, String column) {
+        try {
+            return Optional.ofNullable(rs.getString(column)).orElse("");
+        } catch (SQLException e) {
+            System.err.println("Ошибка: Колонка '" + column + "' не найдена в ResultSet!");
+            return "";
+        }
     }
 
     /**
