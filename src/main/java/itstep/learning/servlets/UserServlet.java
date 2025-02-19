@@ -140,6 +140,40 @@ public class UserServlet extends HttpServlet {
             sendJsonResponse(resp, 500, "{\"message\": \"Помилка бази даних\"}");
         }
     }
+    @Override
+    protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        setupResponseHeaders(resp);
+
+        String pathInfo = req.getPathInfo(); // /10
+        if (pathInfo == null || pathInfo.length() < 2) {
+            sendJsonResponse(resp, 400, "{\"message\": \"Не указан user_id в URL\"}");
+            return;
+        }
+
+        long userId;
+        try {
+            userId = Long.parseLong(pathInfo.substring(1));
+        } catch (NumberFormatException e) {
+            sendJsonResponse(resp, 400, "{\"message\": \"Неправильный формат user_id\"}");
+            return;
+        }
+
+        try {
+            // Проверяем, есть ли пользователь
+            User user = userDao.getUserById(userId);
+            if (user == null) {
+                sendJsonResponse(resp, 404, "{\"message\": \"Пользователь не найден\"}");
+                return;
+            }
+
+            // Удаляем
+            userDao.deleteUser(userId);
+            sendJsonResponse(resp, 200, "{\"message\": \"Пользователь успешно удалён\"}");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            sendJsonResponse(resp, 500, "{\"message\": \"Ошибка удаления: " + e.getMessage() + "\"}");
+        }
+    }
     private void setupResponseHeaders(HttpServletResponse resp) {
         resp.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");  // Замените на ваш фронт
         resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE");

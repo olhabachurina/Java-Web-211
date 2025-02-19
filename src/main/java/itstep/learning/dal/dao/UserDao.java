@@ -4,6 +4,9 @@ import itstep.learning.models.User;
 
 import java.sql.*;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -261,7 +264,9 @@ public class UserDao {
                 " address VARCHAR(256), " +
                 " birthdate DATE, " +
                 " password VARCHAR(256) NOT NULL, " +
-                " registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP " +
+                " registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                " is_deleted BOOLEAN DEFAULT false, " +
+                " delete_moment TIMESTAMP NULL" +
                 ") Engine=InnoDB DEFAULT CHARSET=utf8mb4";
 
         return executeStatement(sql, "✅ [UserDao.installUsers] Таблица users создана/проверена.");
@@ -278,10 +283,38 @@ public class UserDao {
                 " login VARCHAR(128) NOT NULL UNIQUE, " +
                 " salt CHAR(16) NOT NULL, " +
                 " dk CHAR(20) NOT NULL, " +
+                " is_deleted BOOLEAN DEFAULT false, " +      // Добавлен флаг удаления
+                " delete_moment TIMESTAMP NULL, " +         // Добавлен момент удаления
                 " FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE " +
                 ") Engine=InnoDB DEFAULT CHARSET=utf8mb4";
 
         return executeStatement(sql, "✅ [UserDao.installUserAccess] Таблица users_access создана/проверена.");
+    }
+    public void softDeleteUserAccess(String userAccessId) throws SQLException {
+        // Проверка входного параметра
+        if (userAccessId == null || userAccessId.trim().isEmpty()) {
+            logger.warning("⚠ Недопустимый userAccessId: " + userAccessId);
+            throw new IllegalArgumentException("userAccessId не должен быть пустым");
+        }
+
+        String sql = "UPDATE users_access SET " +
+                "is_deleted = ?, " +
+                "delete_moment = ? " +
+                "WHERE user_access_id = ?";
+
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            // Устанавливаем флаг удаления и фиксируем момент удаления
+            stmt.setBoolean(1, true);
+            stmt.setTimestamp(2, new Timestamp(System.currentTimeMillis()));
+            stmt.setString(3, userAccessId);
+
+            int affectedRows = stmt.executeUpdate();
+            if (affectedRows > 0) {
+                logger.info("✅ Запись в users_access помечена как удалённая (user_access_id=" + userAccessId + ")");
+            } else {
+                logger.warning("⚠ Запись в users_access не найдена или не изменена (user_access_id=" + userAccessId + ")");
+            }
+        }
     }
 
     /**
@@ -321,7 +354,22 @@ public class UserDao {
                 ") Engine=InnoDB DEFAULT CHARSET=utf8mb4";
         return executeStatement(sql, "✅ [UserDao.installUserPhones] Таблица user_phones создана/проверена.");
     }
+    /*public boolean installTables() {
+        Future<Boolean> task1 = CompletableFuture
+                .supplyAsync(this::installUserAccess)
+                .thenApply((b) -> { return 1; })  // Преобразуем результат в Integer
+                .thenApply((i) -> true); // Затем конвертируем в Boolean
 
+        Future<Boolean> task2 = CompletableFuture.supplyAsync(this::installUsers);
+
+        try {
+            boolean res1 = task1.get(); // await task1
+            boolean res2 = task2.get(); // await task2
+            return res1 && res2;
+        } catch (ExecutionException | InterruptedException ignore) {
+            return false;
+        }
+    }*/
 
     private boolean executeStatement(String sql, String successMessage) {
         try (Statement statement = connection.createStatement()) {
@@ -426,7 +474,54 @@ public class UserDao {
             }
         }
     }
+    public void softDeleteUser(Long userId) throws SQLException {
+        // Проверяем, существует ли пользователь
+        if (!isUserExists(userId)) {
+            logger.warning("⚠ Пользователь с ID=" + userId + " не найден.");
+            return;
+        }
 
+        // Получаем текущий момент времени для записи даты удаления
+        Timestamp deleteMoment = new Timestamp(System.currentTimeMillis());
+
+        // Обновляем данные пользователя, анонимизируя их и устанавливая флаг удаления
+        String sql = "UPDATE users SET " +
+                "name = ?, " +
+                "login = ?, " +
+                "emails = ?, " +
+                "phones = ?, " +
+                "city = ?, " +
+                "address = ?, " +
+                "birthdate = ?, " +
+                "password = ?, " +
+                "role = ?, " +
+                "is_deleted = ?, " +
+                "delete_moment = ? " +
+                "WHERE id = ?";
+
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            // Анонимизируем личные данные
+            stmt.setString(1, "Deleted User");
+            stmt.setString(2, "deleted");
+            stmt.setString(3, "");       // очищаем e-mail
+            stmt.setString(4, "");       // очищаем телефоны
+            stmt.setString(5, "");       // очищаем город
+            stmt.setString(6, "");       // очищаем адрес
+            stmt.setString(7, "");       // очищаем дату рождения
+            stmt.setString(8, "");       // очищаем пароль
+            stmt.setString(9, "deleted"); // устанавливаем роль, например "deleted"
+            stmt.setBoolean(10, true);    // помечаем как удалённого
+            stmt.setTimestamp(11, deleteMoment);  // записываем момент удаления
+            stmt.setLong(12, userId);     // условие по ID
+
+            int affectedRows = stmt.executeUpdate();
+            if (affectedRows > 0) {
+                logger.info("✅ Пользователь с ID=" + userId + " успешно анонимизирован и помечен как удалён. Момент удаления: " + deleteMoment);
+            } else {
+                logger.warning("⚠ Не удалось анонимизировать пользователя с ID=" + userId);
+            }
+        }
+    }
     /**
      * Удаление Email'ов пользователя
      */
