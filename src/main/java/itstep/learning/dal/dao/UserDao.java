@@ -5,6 +5,7 @@ import itstep.learning.models.User;
 import java.sql.*;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.logging.Level;
@@ -448,7 +449,14 @@ public class UserDao {
             }
         }
     }
-
+    public void updateUserAccessLogin(long userId, String newLogin) throws SQLException {
+        String sql = "UPDATE users_access SET login = ? WHERE user_id = ?";
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setString(1, newLogin);
+            stmt.setLong(2, userId);
+            stmt.executeUpdate();
+        }
+    }
     public void deleteUser(Long userId) throws SQLException {
         logger.info("🔍 Проверяем, существует ли пользователь ID=" + userId);
 
@@ -571,5 +579,69 @@ public class UserDao {
             }
         }
         return null;
+    }
+    public CompletableFuture<Void> updateUserAsync(User user) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                updateUser(user);
+                logger.info("✅ [Async] updateUser выполнен для пользователя ID=" + user.getId());
+            } catch (SQLException e) {
+                logger.severe("❌ [Async] Ошибка при updateUser: " + e.getMessage());
+                throw new CompletionException(e);
+            }
+        });
+    }
+
+    /**
+     * Асинхронное обновление данных доступа (таблица users_access), обновляем login.
+     */
+    public CompletableFuture<Void> updateUserAccessLoginAsync(long userId, String newLogin) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                updateUserAccessLogin(userId, newLogin);
+                logger.info("✅ [Async] updateUserAccessLogin выполнен для пользователя ID=" + userId + " с новым login=" + newLogin);
+            } catch (SQLException e) {
+                logger.severe("❌ [Async] Ошибка при updateUserAccessLogin: " + e.getMessage());
+                throw new CompletionException(e);
+            }
+        });
+    }
+    public User getUserDetailsById(long userId) throws SQLException {
+        String sql = "SELECT u.id, u.name, u.login, u.city, u.address, u.birthdate, " +
+                "       e.email, p.phone " +
+                "FROM users u " +
+                "LEFT JOIN user_emails e ON u.id = e.user_id " +
+                "LEFT JOIN user_phones p ON u.id = p.user_id " +
+                "WHERE u.id = ?";
+
+        User user = null;
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setLong(1, userId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    if (user == null) {
+                        user = new User();
+                        user.setId(rs.getLong("id"));
+                        user.setName(rs.getString("name"));
+                        user.setLogin(rs.getString("login"));
+                        user.setCity(rs.getString("city"));
+                        user.setAddress(rs.getString("address"));
+                        user.setBirthdate(rs.getString("birthdate"));
+                        // Инициализируем списки email и телефонов
+                        user.setEmails(new ArrayList<>());
+                        user.setPhones(new ArrayList<>());
+                    }
+                    String email = rs.getString("email");
+                    if (email != null && !user.getEmails().contains(email)) {
+                        user.getEmails().add(email);
+                    }
+                    String phone = rs.getString("phone");
+                    if (phone != null && !user.getPhones().contains(phone)) {
+                        user.getPhones().add(phone);
+                    }
+                }
+            }
+        }
+        return user;
     }
 }
