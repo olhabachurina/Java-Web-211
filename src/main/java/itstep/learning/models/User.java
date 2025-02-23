@@ -22,7 +22,7 @@ public class User {
     private String emailConfirmationToken;
     private Timestamp tokenCreatedAt;
     private String role;
-
+    private String avatarPath;
     public User() {}
 
     // ✅ Конструктор для упрощенного создания объекта
@@ -197,5 +197,13 @@ public class User {
     @Override
     public int hashCode() {
         return Objects.hash(id, login);
+    }
+
+    public void setAvatarPath(String s) {
+        this.avatarPath = s;
+    }
+
+    public String getAvatarPath() {
+        return avatarPath;
     }
 }

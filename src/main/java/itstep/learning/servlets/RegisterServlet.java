@@ -1,3 +1,4 @@
+
 package itstep.learning.servlets;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
@@ -152,7 +153,7 @@ public class RegisterServlet extends HttpServlet {
 
         try {
             long userId = Long.parseLong(userIdStr);
-            userDao.deleteUser(userId);
+            userDao.softDeleteUser(userId);
             sendJsonResponse(resp, 200, "{\"message\": \"Користувача успішно видалено\"}");
         } catch (NumberFormatException e) {
             sendJsonResponse(resp, 400, "{\"message\": \"Невірний формат ID\"}");
