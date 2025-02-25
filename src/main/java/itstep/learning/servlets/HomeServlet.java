@@ -98,7 +98,6 @@ public class HomeServlet extends HttpServlet {
             response.put("randomFileName", randomFileName);
             response.put("hashedMessage", hashedMessage);
             response.put("message", "Запит виконано успішно.");
-
         } catch (IllegalStateException e) {
             LOGGER.log(Level.SEVERE, "Ошибка загрузки зависимостей", e);
             response.put("message", "Ошибка загрузки зависимостей: " + e.getMessage());

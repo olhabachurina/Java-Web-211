@@ -1,6 +1,7 @@
 package itstep.learning.dal.dao;
 
 import itstep.learning.models.User;
+import itstep.learning.services.DbService.DbService;
 
 import java.sql.*;
 import java.util.*;

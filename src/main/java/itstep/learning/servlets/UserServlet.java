@@ -1,7 +1,10 @@
 package itstep.learning.servlets;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
+import com.google.inject.Inject;
+import itstep.learning.dal.dao.AccessTokenDao;
 import itstep.learning.dal.dao.UserDao;
 import itstep.learning.models.User;
 import jakarta.inject.Singleton;
@@ -16,8 +19,10 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.*;
+import java.time.LocalDateTime;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.logging.Level;
@@ -29,17 +34,24 @@ import static com.mysql.cj.conf.PropertyKey.logger;
 @WebServlet("/users/*")
 public class UserServlet extends HttpServlet {
     private static final Logger LOGGER = Logger.getLogger(UserServlet.class.getName());
+
     private UserDao userDao;
     private Connection connection;
+
+    // Guice-внедрение DAO для работы с токенами
+    @Inject
+    private AccessTokenDao accessTokenDao;
 
     @Override
     public void init(ServletConfig config) throws ServletException {
         super.init(config);
         ServletContext context = config.getServletContext();
 
+        // Достаём готовое подключение к БД и логгер
         this.connection = (Connection) context.getAttribute("dbConnection");
         Logger appLogger = (Logger) context.getAttribute("appLogger");
 
+        // Инициализируем UserDao
         userDao = new UserDao(connection, appLogger);
         LOGGER.info("UserServlet инициализирован.");
     }
@@ -53,12 +65,20 @@ public class UserServlet extends HttpServlet {
         setupResponseHeaders(resp);
         LOGGER.info("Получен PUT-запрос: " + req.getRequestURI());
 
+        // Проверяем наличие Access Token в заголовке
+        String authHeader = req.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            sendJsonResponse(resp, 401, "{\"message\": \"Access token is missing or invalid\"}");
+            return;
+        }
+        String accessToken = authHeader.substring(7); // Убираем "Bearer "
+
+        //  Получаем userId из URL
         String pathInfo = req.getPathInfo();
         if (pathInfo == null || pathInfo.length() < 2) {
             sendJsonResponse(resp, 400, "{\"message\": \"User ID not provided in URL\"}");
             return;
         }
-
         long userId;
         try {
             userId = Long.parseLong(pathInfo.substring(1));
@@ -69,7 +89,11 @@ public class UserServlet extends HttpServlet {
             return;
         }
 
-        // Считываем тело запроса (JSON)
+        //  Проверяем валидность токена
+        boolean isValid = accessTokenDao.isTokenValid(accessToken, String.valueOf(userId));
+
+
+        //  Считываем тело запроса (JSON)
         String body = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         LOGGER.info("Request body: " + body);
 
@@ -85,14 +109,13 @@ public class UserServlet extends HttpServlet {
         }
 
         try {
-            // Получаем существующего пользователя
+            // 5️⃣ Получаем существующего пользователя
             User existingUser = userDao.getUserById(userId);
             if (existingUser == null) {
                 LOGGER.warning("User with ID " + userId + " not found.");
                 sendJsonResponse(resp, 404, "{\"message\": \"User not found\"}");
                 return;
             }
-
             LOGGER.info("Начинаем обновление для user ID=" + userId);
             LOGGER.info("Старые данные: " + gson.toJson(existingUser));
 
@@ -163,11 +186,47 @@ public class UserServlet extends HttpServlet {
             CompletableFuture.allOf(userUpdateFuture, userAccessFuture).join();
             LOGGER.info("Asynchronous tasks completed.");
 
-            // Получаем обновлённые данные (с полными полями: email, phones и т.д.)
+            //  Генерируем новый Access Token и рассчитываем срок его действия
+            String userIdStr = String.valueOf(finalUserId);
+            String newAccessToken = UUID.randomUUID().toString();
+            LocalDateTime issuedAt = LocalDateTime.now();
+            LocalDateTime expiresAt = issuedAt.plusDays(7);
+            LOGGER.info("🔑 Сгенерирован новий Access Token: " + newAccessToken);
+
+            //  «Обновить или создать» запись в access_tokens
+            String existingToken = accessTokenDao.getToken(userIdStr);
+            boolean tokenOperationResult;
+            if (existingToken == null) {
+                // Записи нет – создаём новую
+                tokenOperationResult = accessTokenDao.saveToken(newAccessToken, userIdStr, issuedAt, expiresAt);
+                if (tokenOperationResult) {
+                    LOGGER.info("✅ Новый токен сохранён в БД для user_id=" + finalUserId);
+                }
+            } else {
+                // Запись есть – обновляем (продлеваем срок действия)
+                tokenOperationResult = accessTokenDao.updateToken(existingToken, userIdStr, issuedAt, expiresAt);
+                if (tokenOperationResult) {
+                    LOGGER.info("✅ Токен обновлён для user_id=" + finalUserId);
+                }
+            }
+
+            if (!tokenOperationResult) {
+                LOGGER.warning("❌ Не удалось обновить/сохранить токен.");
+                sendJsonResponse(resp, 500, "{\"message\": \"Помилка оновлення токена\"}");
+                return;
+            }
+
+            // 8️⃣ Получаем обновленные данные (с полными полями: email, phones и т.д.)
             User refreshedUser = userDao.getUserDetailsById(finalUserId);
             LOGGER.info("Updated user (and access) details: " + gson.toJson(refreshedUser));
 
-            sendJsonResponse(resp, 200, gson.toJson(refreshedUser));
+            // 9️⃣ Отправляем обновленные данные + новый токен
+            JsonObject responseJson = new JsonObject();
+            responseJson.addProperty("message", "Користувач успішно оновлений");
+            responseJson.addProperty("token", newAccessToken);
+            responseJson.add("user", gson.toJsonTree(refreshedUser));
+
+            sendJsonResponse(resp, 200, responseJson.toString());
 
         } catch (CompletionException ce) {
             Throwable cause = ce.getCause();
@@ -186,14 +245,19 @@ public class UserServlet extends HttpServlet {
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         setupResponseHeaders(resp);
-        LOGGER.info("Получен GET-запрос: " + req.getRequestURI());
+        String authHeader = req.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            sendJsonResponse(resp, 401, "{\"message\": \"Access token is missing or invalid\"}");
+            return;
+        }
+        String token = authHeader.substring(7);
 
+        // Получаем userId из URL
         String pathInfo = req.getPathInfo();
         if (pathInfo == null || pathInfo.length() < 2) {
             sendJsonResponse(resp, 400, "{\"message\": \"User ID not provided in URL\"}");
             return;
         }
-
         long userId;
         try {
             userId = Long.parseLong(pathInfo.substring(1));
@@ -202,14 +266,21 @@ public class UserServlet extends HttpServlet {
             return;
         }
 
+        // Проверяем валидность токена для данного пользователя
+        boolean valid;
+        valid = accessTokenDao.isTokenValid(token, String.valueOf(userId));
+        if (!valid) {
+            sendJsonResponse(resp, 403, "{\"message\": \"Invalid or expired token\"}");
+            return;
+        }
+
+        // Если токен валиден – возвращаем данные пользователя
         try {
-            // Если нужно вернуть полные данные (email, phones), используйте getUserDetailsById
             User user = userDao.getUserById(userId);
             if (user == null) {
                 sendJsonResponse(resp, 404, "{\"message\": \"User not found\"}");
                 return;
             }
-
             Gson gson = new Gson();
             sendJsonResponse(resp, 200, gson.toJson(user));
         } catch (SQLException e) {
@@ -221,12 +292,10 @@ public class UserServlet extends HttpServlet {
      * DELETE /users/{id}
      * Мягкое удаление (soft delete) пользователя.
      */
-
     @Override
     protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         setupResponseHeaders(resp);
-
-        String pathInfo = req.getPathInfo(); // наприклад, /36
+        String pathInfo = req.getPathInfo(); // например, /36
         if (pathInfo == null || pathInfo.length() < 2) {
             sendJsonResponse(resp, 400, "{\"message\": \"Не вказано user_id у URL\"}");
             return;
@@ -264,7 +333,6 @@ public class UserServlet extends HttpServlet {
             LOGGER.info("Очікування завершення асинхронної операції м'якого видалення...");
             deleteFuture.join();
             LOGGER.info("Асинхронне м'яке видалення завершено для користувача з ID=" + userId);
-
             sendJsonResponse(resp, 200, "{\"message\": \"Користувача успішно анонімізовано і позначено як видаленого\"}");
         } catch (CompletionException ce) {
             Throwable cause = ce.getCause();

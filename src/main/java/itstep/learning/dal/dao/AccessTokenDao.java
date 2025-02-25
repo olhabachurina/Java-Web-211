@@ -1,97 +1,129 @@
 package itstep.learning.dal.dao;
 
 
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
+import java.time.LocalDateTime;
 import java.util.logging.Logger;
 
 
+import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import itstep.learning.services.DbService.DbService;
+
 
 @Singleton
 public class AccessTokenDao {
 
-    // Единственный экземпляр класса (Singleton)
-    private static AccessTokenDao instance;
-
-    // Логгер для данного класса
+    private final DbService dbService;
     private static final Logger logger = Logger.getLogger(AccessTokenDao.class.getName());
-    private static DbService DBService;
 
-    // Подключение к базе данных, получаемое через DBService
-    private final Connection connection;
-
-    /**
-     * Приватный конструктор (паттерн Singleton).
-     * При создании выводим в лог информацию о подключении.
-     */
-    private AccessTokenDao(Connection connection) {
-        this.connection = connection;
-        logger.info("AccessTokenDao: конструктор вызван. Получено подключение: " + connection);
+    @Inject
+    public AccessTokenDao(DbService dbService) {
+        this.dbService = dbService;
+        logger.info("✅ AccessTokenDao создан с использованием DbService.");
     }
 
-    /**
-     * Метод для получения единственного экземпляра AccessTokenDao.
-     * Если экземпляр ещё не создан, создаётся новый с использованием подключения из DBService.
-     */
-    public static synchronized AccessTokenDao getInstance() throws SQLException {
-        if (instance == null) {
-            logger.info("AccessTokenDao.getInstance() -> Экземпляр не найден, создаём новый через DBService...");
+    private static final String SQL_IS_TOKEN_VALID =
+            "SELECT COUNT(*) FROM access_tokens WHERE access_token_id = ? AND user_access_id = ? AND expires_at > NOW()";
+    private static final String SQL_SAVE_TOKEN =
+            "INSERT INTO access_tokens (access_token_id, user_access_id, issued_at, expires_at) VALUES (?, ?, ?, ?)";
+    private static final String SQL_UPDATE_TOKEN =
+            "UPDATE access_tokens SET access_token_id = ?, issued_at = ?, expires_at = ? WHERE user_access_id = ?";
+    private static final String SQL_GET_TOKEN =
+            "SELECT access_token_id FROM access_tokens WHERE user_access_id = ? AND expires_at > NOW()";
+    private static final String SQL_DELETE_TOKEN =
+            "DELETE FROM access_tokens WHERE access_token_id = ?";
 
-            Connection conn = DBService.getConnection(); // Получаем подключение из DBService
-            instance = new AccessTokenDao(conn);
-        } else {
-            logger.info("AccessTokenDao.getInstance() -> Возвращаем существующий экземпляр.");
-        }
-        return instance;
-    }
-
-    /**
-     * Создание таблицы access_tokens, если она не существует.
-     * Добавлено подробное логирование: перед выполнением запроса и при его завершении.
-     */
-    public boolean installTables() {
-        String sql = "CREATE TABLE IF NOT EXISTS access_tokens ("
-                + " access_token_id CHAR(36) PRIMARY KEY, "
-                + " user_access_id CHAR(36) NOT NULL, "
-                + " issued_at DATETIME NOT NULL, "
-                + " expires_at DATETIME NOT NULL"
-                + ") Engine=InnoDB DEFAULT CHARSET=utf8mb4";
-
-        logger.info("installTables: подготавливаем запрос для создания таблицы access_tokens:\n" + sql);
-
-        try (Connection conn = DBService.getConnection();
-             Statement statement = conn.createStatement()) {
-
-            logger.info("installTables: выполняем SQL-запрос...");
-            statement.executeUpdate(sql);
-            logger.info("✅ [AccessTokenDao.installTables] Таблица access_tokens создана/проверена.");
-            return true;
+    public boolean isTokenValid(String token, String userId) {
+        try (Connection conn = dbService.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(SQL_IS_TOKEN_VALID)) {
+            stmt.setString(1, token);
+            stmt.setString(2, userId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next() && rs.getInt(1) > 0) {
+                    logger.info("✅ Токен действителен: " + token);
+                    return true;
+                }
+            }
+            logger.warning("❌ Недействительный токен: " + token);
+            return false;
         } catch (SQLException e) {
-            logger.severe("❌ [AccessTokenDao.installTables] Ошибка выполнения SQL: " + e.getMessage());
+            logger.severe("❌ Ошибка при проверке токена: " + e.getMessage());
             return false;
         }
     }
 
-    /**
-     * Универсальный метод для выполнения SQL-запросов без возврата результата.
-     * Добавлено подробное логирование на каждом этапе (создание Statement, выполнение, результат).
-     *
-     * @param sql SQL-запрос для выполнения
-     * @param successMessage Сообщение для логирования в случае успеха
-     * @return true, если запрос выполнен успешно, иначе false
-     */
-    private boolean executeStatement(String sql, String successMessage) {
-        logger.info("executeStatement() -> Создаём Statement для выполнения запроса...");
-        try (Statement statement = connection.createStatement()) {
-            logger.info("executeStatement() -> Выполняем запрос:\n" + sql);
-            statement.executeUpdate(sql);
-            logger.info(successMessage);
-            return true;
+    public boolean saveToken(String token, String userId, LocalDateTime issuedAt, LocalDateTime expiresAt) {
+        try (Connection conn = dbService.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(SQL_SAVE_TOKEN)) {
+            stmt.setString(1, token);
+            stmt.setString(2, userId);
+            stmt.setTimestamp(3, Timestamp.valueOf(issuedAt));
+            stmt.setTimestamp(4, Timestamp.valueOf(expiresAt));
+            int rows = stmt.executeUpdate();
+            if (rows > 0) {
+                logger.info("✅ Токен успешно сохранён в БД: " + token);
+                return true;
+            } else {
+                logger.warning("⚠️ Токен не был сохранён!");
+                return false;
+            }
         } catch (SQLException e) {
-            logger.severe("❌ [executeStatement] Ошибка выполнения SQL: " + e.getMessage());
+            logger.severe("❌ Ошибка сохранения токена: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean updateToken(String newToken, String userId, LocalDateTime issuedAt, LocalDateTime expiresAt) {
+        try (Connection conn = dbService.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(SQL_UPDATE_TOKEN)) {
+            stmt.setString(1, newToken);
+            stmt.setTimestamp(2, Timestamp.valueOf(issuedAt));
+            stmt.setTimestamp(3, Timestamp.valueOf(expiresAt));
+            stmt.setString(4, userId);
+            int rows = stmt.executeUpdate();
+            logger.info("✅ Токен обновлен для user_id=" + userId);
+            return rows > 0;
+        } catch (SQLException e) {
+            logger.severe("❌ Ошибка при обновлении токена: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public String getToken(String userId) {
+        // Изменённый SQL-запрос для получения токена и его срока действия
+        final String sql = "SELECT access_token_id, expires_at FROM access_tokens " +
+                "WHERE user_access_id = ? AND expires_at > NOW()";
+        try (Connection conn = dbService.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, userId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    String token = rs.getString("access_token_id");
+                    Timestamp expiresAtTimestamp = rs.getTimestamp("expires_at");
+                    LocalDateTime expiresAt = expiresAtTimestamp.toLocalDateTime();
+                    logger.info("✅ Действующий токен найден: " + token +
+                            ", срок действия до: " + expiresAt);
+                    return token;
+                }
+                logger.info("🔍 Токен не найден. Будет создан новый токен.");
+                return null;
+            }
+        } catch (SQLException e) {
+            logger.severe("❌ Ошибка при получении токена: " + e.getMessage());
+            return null;
+        }
+    }
+
+    public boolean deleteToken(String token) {
+        try (Connection conn = dbService.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(SQL_DELETE_TOKEN)) {
+            stmt.setString(1, token);
+            int rows = stmt.executeUpdate();
+            logger.info("✅ Токен удалён: " + token);
+            return rows > 0;
+        } catch (SQLException e) {
+            logger.severe("❌ Ошибка при удалении токена: " + e.getMessage());
             return false;
         }
     }

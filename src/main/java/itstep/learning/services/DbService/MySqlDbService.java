@@ -1,6 +1,7 @@
 package itstep.learning.services.DbService;
 
 import com.google.gson.Gson;
+import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -9,9 +10,9 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.logging.Logger;
 
 import static itstep.learning.rest.RestResponse.gson;
-
 
 @Singleton
 public class MySqlDbService implements DbService {

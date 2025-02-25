@@ -1,5 +1,8 @@
 package itstep.learning.ioc;
 
+import itstep.learning.dal.dao.AccessTokenDao;
+import itstep.learning.services.DbService.DbService;
+import itstep.learning.services.DbService.MySqlDbService;
 import jakarta.servlet.ServletContextEvent;
 import jakarta.servlet.ServletContextListener;
 import jakarta.servlet.annotation.WebListener;
@@ -7,6 +10,8 @@ import jakarta.servlet.annotation.WebListener;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+
+
 
 @WebListener
 public class DbConfigListener implements ServletContextListener {
@@ -22,6 +27,7 @@ public class DbConfigListener implements ServletContextListener {
                     "pass221"
             );
             sce.getServletContext().setAttribute("dbConnection", connection);
+
             System.out.println("✅ Подключение к БД установлено!");
         } catch (Exception e) {
             throw new RuntimeException("❌ Ошибка подключения к БД!", e);
