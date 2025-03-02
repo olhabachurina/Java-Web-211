@@ -1,14 +1,25 @@
 package itstep.learning.dal.dao;
 
 
+import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.time.LocalDateTime;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
 import java.util.logging.Logger;
-
+import java.security.Key;
+import io.jsonwebtoken.security.Keys;
 
 import com.google.inject.Inject;
+
 import com.google.inject.Singleton;
+import io.jsonwebtoken.*;
+import io.jsonwebtoken.security.Keys;
+import itstep.learning.dal.dto.UserAccess;
 import itstep.learning.services.DbService.DbService;
+import itstep.learning.services.config.ConfigService;
 
 
 @Singleton
@@ -30,7 +41,7 @@ public class AccessTokenDao {
     private static final String SQL_UPDATE_TOKEN =
             "UPDATE access_tokens SET access_token_id = ?, issued_at = ?, expires_at = ? WHERE user_access_id = ?";
     private static final String SQL_GET_TOKEN =
-            "SELECT access_token_id FROM access_tokens WHERE user_access_id = ? AND expires_at > NOW()";
+            "SELECT access_token_id, expires_at FROM access_tokens WHERE user_access_id = ? AND expires_at > NOW()";
     private static final String SQL_DELETE_TOKEN =
             "DELETE FROM access_tokens WHERE access_token_id = ?";
 
@@ -91,11 +102,8 @@ public class AccessTokenDao {
     }
 
     public String getToken(String userId) {
-        // Изменённый SQL-запрос для получения токена и его срока действия
-        final String sql = "SELECT access_token_id, expires_at FROM access_tokens " +
-                "WHERE user_access_id = ? AND expires_at > NOW()";
         try (Connection conn = dbService.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+             PreparedStatement stmt = conn.prepareStatement(SQL_GET_TOKEN)) {
             stmt.setString(1, userId);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {

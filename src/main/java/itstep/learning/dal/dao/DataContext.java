@@ -14,6 +14,7 @@ public class DataContext {
     private final Connection connection;
     private final Logger logger;
     private final UserDao userDao;
+    private AccessTokenDao accessTokenDao;
 
     @Inject
     public DataContext(DbService dbService, Logger logger) {
@@ -26,7 +27,9 @@ public class DataContext {
     public UserDao getUserDao() {
         return userDao;
     }
-
+    public AccessTokenDao getAccessTokenDao() {
+        return this.accessTokenDao;
+    }
     public boolean installTables() {
         try {
             logger.info("Початок встановлення таблиць...");

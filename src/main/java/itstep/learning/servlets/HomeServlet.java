@@ -1,10 +1,12 @@
 package itstep.learning.servlets;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import itstep.learning.dal.dao.DataContext;
 import itstep.learning.services.DbService.DbService;
+import itstep.learning.services.config.ConfigService;
 import itstep.learning.services.hash.HashService;
 import itstep.learning.services.hash.Md5HashService;
 import itstep.learning.services.kdf.KdfService;
@@ -28,9 +30,10 @@ import com.google.gson.Gson;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+
+
 @Singleton
 @WebServlet("/home")
-
 public class HomeServlet extends HttpServlet {
     private static final Logger LOGGER = Logger.getLogger(HomeServlet.class.getName());
 
@@ -38,13 +41,19 @@ public class HomeServlet extends HttpServlet {
     private final DateTimeService dateTimeService;
     private final KdfService kdfService;
     private final DataContext dataContext;
+    private final ConfigService configService;
 
     @Inject
-    public HomeServlet(RandomService randomService, DateTimeService dateTimeService, KdfService kdfService, DataContext dataContext) {
+    public HomeServlet(RandomService randomService,
+                       DateTimeService dateTimeService,
+                       KdfService kdfService,
+                       DataContext dataContext,
+                       ConfigService configService) {
         this.randomService = randomService;
         this.dateTimeService = dateTimeService;
         this.kdfService = kdfService;
         this.dataContext = dataContext;
+        this.configService = configService;
     }
 
     public HomeServlet() {
@@ -52,6 +61,7 @@ public class HomeServlet extends HttpServlet {
         this.dateTimeService = null;
         this.kdfService = null;
         this.dataContext = null;
+        this.configService = null;
     }
 
     @Override
@@ -63,15 +73,27 @@ public class HomeServlet extends HttpServlet {
         int statusCode = 200;
 
         try {
-            if (randomService == null || dateTimeService == null || kdfService == null || dataContext == null) {
+            if (randomService == null || dateTimeService == null || kdfService == null
+                    || dataContext == null || configService == null) {
                 throw new IllegalStateException("Не удалось загрузить все зависимости через Guice.");
             }
+
+            // Инициализация БД (создание таблиц, базовых ролей и т.п.)
             dataContext.initializeRolesAndAccess();
+
+            // Получаем параметры из конфигурации
+            int lifetime = configService.getInt("jwt.lifetime");      // пример: 100
+            String db = configService.getString("db.MySql.dbms");         // пример: "MySql"
+            String host = configService.getString("db.MySql.host");       // пример: "localhost"
+
+            // Пример получения "someConfigKey" (если нужно)
+            // String someConfig = configService.getString("someConfigKey");
+
             // Генерация случайного числа
             int randomNumber = randomService.randomInt();
 
-            // Генерация случайной строки
-            String randomString = randomService.randomString(10);
+            // Генерация случайной строки (длина 9 символов, как в примере)
+            String randomString = randomService.randomString(9);
 
             // Генерация случайного имени файла
             String randomFileName = randomService.randomFileName(12);
@@ -84,31 +106,36 @@ public class HomeServlet extends HttpServlet {
             String tablesMessage = tablesCreated
                     ? "install ok"
                     : "Ошибка при создании таблиц. Проверьте логи для деталей.";
-            response.put("tablesMessage", tablesMessage);
 
-            // Получение данных через UserDao из DataContext
+            // Получение данных через UserDao
             String currentTime = dataContext.getUserDao().fetchCurrentTime();
             String databases = dataContext.getUserDao().fetchDatabases();
 
-            // Формирование успешного ответа
-            response.put("currentTime", currentTime != null ? currentTime : "Не удалось получить текущее время");
-            response.put("databases", databases != null ? databases : "Не удалось получить список баз данных");
-            response.put("randomNumber", randomNumber);
-            response.put("randomString", randomString);
-            response.put("randomFileName", randomFileName);
-            response.put("hashedMessage", hashedMessage);
+            // Формируем итоговый JSON-ответ
+            response.put("tablesMessage", tablesMessage);                       // "install ok"
+            response.put("currentTime", currentTime != null ? currentTime : "");
+            response.put("databases", databases != null ? databases : "");      // "information_schema, java221, performance_schema"
+            response.put("randomNumber", randomNumber);                         // "1656679532"
+            response.put("randomString", randomString);                         // "7lVJgZItc8"
+            response.put("randomFileName", randomFileName);                     // "a7739a249fea.txt"
+            response.put("hashedMessage", hashedMessage);                       // "85ec1a9b766c9a39d42bd10cfa7fb66f2bd45e6563320d2a9fdc63fd0a5cd1f0"
             response.put("message", "Запит виконано успішно.");
+            response.put("lifetime", lifetime);                                 // "100"
+            response.put("db", db);                                             // "MySql"
+            response.put("host", host);                                         // "localhost"
+            response.put("status", statusCode);
         } catch (IllegalStateException e) {
             LOGGER.log(Level.SEVERE, "Ошибка загрузки зависимостей", e);
             response.put("message", "Ошибка загрузки зависимостей: " + e.getMessage());
             statusCode = 500;
+            response.put("status", statusCode);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Неожиданная ошибка", e);
             response.put("message", "Виникла несподівана помилка: " + e.getMessage());
             statusCode = 500;
+            response.put("status", statusCode);
         }
 
-        response.put("status", statusCode);
         resp.setStatus(statusCode);
         resp.getWriter().print(new Gson().toJson(response));
     }
@@ -119,7 +146,6 @@ public class HomeServlet extends HttpServlet {
         resp.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 }
-
 /**
  * IoC (Inversion of Control) — Інверсія управління
  * Архітектурний патерн, за яким управління (життєвим циклом об'єктів)

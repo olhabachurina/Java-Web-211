@@ -1,12 +1,16 @@
 package itstep.learning.servlets;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import io.jsonwebtoken.*;
+import io.jsonwebtoken.security.Keys;
 import itstep.learning.dal.dao.AccessTokenDao;
 import itstep.learning.models.User;
 import itstep.learning.services.DbService.DbService;
 import itstep.learning.services.DbService.MySqlDbService;
+import itstep.learning.services.JwtService;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
@@ -17,117 +21,90 @@ import org.mindrot.jbcrypt.BCrypt;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.*;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.Date;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.security.Key;
+
+
 
 @Singleton
 @WebServlet("/login")
 public class LoginServlet extends HttpServlet {
+
     private static final Logger LOGGER = Logger.getLogger(LoginServlet.class.getName());
     private static final String CONNECTION_STRING =
             "jdbc:mysql://127.0.0.1:3306/Java221?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true";
     private static final String DB_USER = "user221";
     private static final String DB_PASSWORD = "pass221";
+
     private final Gson gson = new Gson();
 
-    // Внедряем AccessTokenDao через DI (Guice)
     @Inject
-    private AccessTokenDao accessTokenDao;
-
-
-
-    @Override
-    public void init() throws ServletException {
-        super.init();
-
-    }
+    private JwtService jwtService;
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        LOGGER.info("POST-запит на аутентифікацію отримано");
+        LOGGER.info("Получен POST-запрос на аутентификацию");
         setupResponseHeaders(resp);
 
-        // Проверяем заголовок Authorization: Basic base64(login:password)
         String authHeader = req.getHeader("Authorization");
         if (authHeader == null || !authHeader.startsWith("Basic ")) {
-            sendJsonResponse(resp, 401, Map.of("error", "Відсутній заголовок Authorization"));
+            sendJsonResponse(resp, 401, Map.of("error", "Отсутствует заголовок Authorization"));
             return;
         }
 
-        // Декодируем Base64 (login:password)
         String base64Credentials = authHeader.substring("Basic ".length());
         String credentials = new String(Base64.getDecoder().decode(base64Credentials), StandardCharsets.UTF_8);
         String[] parts = credentials.split(":", 2);
         if (parts.length != 2) {
-            sendJsonResponse(resp, 400, Map.of("error", "Невірний формат логіна і пароля"));
+            sendJsonResponse(resp, 400, Map.of("error", "Неверный формат логина и пароля"));
             return;
         }
 
         String login = parts[0];
         String password = parts[1];
 
-        // Подключаемся к БД
         try (Connection connection = DriverManager.getConnection(CONNECTION_STRING, DB_USER, DB_PASSWORD)) {
-            LOGGER.info("Підключення до БД для авторизації");
+            LOGGER.info("Установлено подключение к БД для авторизации");
 
             User userShort = getUserByLogin(connection, login);
             if (userShort == null || !BCrypt.checkpw(password, userShort.getPassword())) {
-                sendJsonResponse(resp, 401, Map.of("error", "Невірний логін або пароль"));
+                sendJsonResponse(resp, 401, Map.of("error", "Неверный логин или пароль"));
                 return;
             }
 
-            LOGGER.info("✅ Успішна авторизація користувача: " + login);
+            LOGGER.info("✅ Успешная авторизация пользователя: " + login);
 
             User fullUser = getUserById(connection, userShort.getId());
             if (fullUser == null) {
-                sendJsonResponse(resp, 500, Map.of("error", "Не вдалося отримати повні дані користувача"));
+                sendJsonResponse(resp, 500, Map.of("error", "Не удалось получить полные данные пользователя"));
                 return;
             }
 
-            // Определяем время выпуска и истечения токена (например, на 7 дней)
-            LocalDateTime issuedAt = LocalDateTime.now();
-            LocalDateTime expiresAt = issuedAt.plusDays(7);
+            // Формирование полезной нагрузки для JWT
+            JsonObject payload = new JsonObject();
+            payload.addProperty("user_id", fullUser.getId());
+            payload.addProperty("login", fullUser.getLogin());
+            payload.addProperty("role", fullUser.getRole());
 
-            String userIdStr = String.valueOf(fullUser.getId());
-            String token;
-            boolean tokenResult;
-            String existingToken = accessTokenDao.getToken(userIdStr);
-            if (existingToken != null) {
-                // Есть активный токен – продлеваем его срок действия (не меняем сам token)
-                tokenResult = accessTokenDao.updateToken(existingToken, userIdStr, issuedAt, expiresAt);
-                token = existingToken;
-                LOGGER.info("Продлено термін дії токена для user_id=" + userIdStr);
-            } else {
-                // Нет активного токена – генерируем и сохраняем новый
-                token = UUID.randomUUID().toString();
-                tokenResult = accessTokenDao.saveToken(token, userIdStr, issuedAt, expiresAt);
-                LOGGER.info("Створено новий токен для user_id=" + userIdStr);
-            }
+            String jwtToken = jwtService.createJwt(payload);
 
-            if (!tokenResult) {
-                sendJsonResponse(resp, 500, Map.of("error", "Не вдалося створити/продовжити токен"));
-                return;
-            }
-
-            Map<String, Object> responseData = new LinkedHashMap<>();
-            responseData.put("message", "Успішний вхід");
-            responseData.put("token", token);
-            responseData.put("user_id", fullUser.getId());
-            responseData.put("login", fullUser.getLogin());
-            responseData.put("name", fullUser.getName());
-            responseData.put("city", fullUser.getCity());
-            responseData.put("address", fullUser.getAddress());
-            responseData.put("birthdate", fullUser.getBirthdate());
-            responseData.put("role", fullUser.getRole());
-            responseData.put("emails", fullUser.getEmails());
-            responseData.put("phones", fullUser.getPhones());
+            Map<String, Object> responseData = Map.of(
+                    "message", "Успешный вход",
+                    "token", jwtToken,
+                    "user", fullUser
+            );
 
             sendJsonResponse(resp, 200, responseData);
         } catch (SQLException ex) {
-            LOGGER.log(Level.SEVERE, "❌ Помилка бази даних при авторизації", ex);
-            sendJsonResponse(resp, 500, Map.of("error", "Помилка бази даних"));
+            LOGGER.log(Level.SEVERE, "❌ Ошибка базы данных при авторизации", ex);
+            sendJsonResponse(resp, 500, Map.of("error", "Ошибка базы данных"));
         }
     }
 
@@ -146,23 +123,30 @@ public class LoginServlet extends HttpServlet {
 
     private User getUserById(Connection connection, Long userId) throws SQLException {
         String sql = "SELECT * FROM users WHERE id = ?";
-        User user = null;
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setLong(1, userId);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    user = User.fromResultSet(rs);
-                    user.setEmails(getEmailsForUser(connection, userId));
-                    user.setPhones(getPhonesForUser(connection, userId));
+                    User user = User.fromResultSet(rs);
+
+                    // Загружаем emails и телефоны
+                    user.setEmails(getUserEmails(connection, userId));
+                    user.setPhones(getUserPhones(connection, userId));
+
+                    LOGGER.info("🔍 Загружены данные пользователя ID=" + userId +
+                            ": Emails=" + user.getEmails() +
+                            ", Phones=" + user.getPhones());
+
+                    return user;
                 }
             }
         }
-        return user;
+        return null;
     }
 
-    private java.util.List<String> getEmailsForUser(Connection connection, Long userId) throws SQLException {
+    private List<String> getUserEmails(Connection connection, Long userId) throws SQLException {
+        List<String> emails = new ArrayList<>();
         String sql = "SELECT email FROM user_emails WHERE user_id = ?";
-        java.util.List<String> emails = new java.util.ArrayList<>();
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setLong(1, userId);
             try (ResultSet rs = stmt.executeQuery()) {
@@ -171,12 +155,12 @@ public class LoginServlet extends HttpServlet {
                 }
             }
         }
-        return emails;
+        return emails.isEmpty() ? Collections.emptyList() : emails;
     }
 
-    private java.util.List<String> getPhonesForUser(Connection connection, Long userId) throws SQLException {
+    private List<String> getUserPhones(Connection connection, Long userId) throws SQLException {
+        List<String> phones = new ArrayList<>();
         String sql = "SELECT phone FROM user_phones WHERE user_id = ?";
-        java.util.List<String> phones = new java.util.ArrayList<>();
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setLong(1, userId);
             try (ResultSet rs = stmt.executeQuery()) {
@@ -185,7 +169,7 @@ public class LoginServlet extends HttpServlet {
                 }
             }
         }
-        return phones;
+        return phones.isEmpty() ? Collections.emptyList() : phones;
     }
 
     private void setupResponseHeaders(HttpServletResponse resp) {
@@ -195,18 +179,16 @@ public class LoginServlet extends HttpServlet {
         resp.setHeader("Access-Control-Allow-Credentials", "true");
     }
 
-    private void sendJsonResponse(HttpServletResponse resp, int statusCode, Map<String, Object> data)
-            throws IOException {
+    private void sendJsonResponse(HttpServletResponse resp, int statusCode, Object data) throws IOException {
         resp.setStatus(statusCode);
         resp.setContentType("application/json;charset=UTF-8");
         resp.getWriter().write(gson.toJson(data));
-        LOGGER.info("Отправлен HTTP " + statusCode + ": " + gson.toJson(data));
+        LOGGER.info("📤 Отправлен HTTP " + statusCode + ": " + gson.toJson(data));
     }
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        resp.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
-        sendJsonResponse(resp, 405, Map.of("error", "Метод GET не підтримується. Використовуйте POST."));
+        sendJsonResponse(resp, 405, Map.of("error", "Метод GET не поддерживается. Используйте POST."));
     }
 
     @Override

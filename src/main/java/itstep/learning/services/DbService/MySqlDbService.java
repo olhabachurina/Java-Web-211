@@ -3,6 +3,7 @@ package itstep.learning.services.DbService;
 import com.google.gson.Gson;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import itstep.learning.services.config.ConfigService;
 import jakarta.servlet.http.HttpServletRequest;
 
 import java.io.IOException;
@@ -10,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static itstep.learning.rest.RestResponse.gson;
@@ -17,29 +19,40 @@ import static itstep.learning.rest.RestResponse.gson;
 @Singleton
 public class MySqlDbService implements DbService {
     private Connection connection;
+    private final ConfigService configService;
+    private static final Logger logger = Logger.getLogger(MySqlDbService.class.getName());
+
+    @Inject
+    public MySqlDbService(ConfigService configService) {
+        this.configService = configService;
+    }
 
     @Override
     public Connection getConnection() {
         if (connection == null || isConnectionClosed()) {
             try {
-                String url = "jdbc:mysql://localhost:3306/java221"
+                // Используем правильные пути к параметрам конфигурации
+                String host = configService.getString("db.MySql.host");
+                int port = configService.getInt("db.MySql.port");
+                String database = configService.getString("db.MySql.schema");
+                String user = configService.getString("db.MySql.user");
+                String password = configService.getString("db.MySql.password");
+                String params = configService.getString("db.MySql.params");
+
+                // Формируем URL подключения
+                String url = "jdbc:mysql://" + host + ":" + port + "/" + database
                         + "?useSSL=false"
                         + "&serverTimezone=UTC"
-                        + "&useUnicode=true"
-                        + "&characterEncoding=UTF-8";
+                        + "&" + params;
 
-                String user = "user221"; // Проверьте правильность имени пользователя
-                String password = "pass221"; // Проверьте правильность пароля
-
-                // Установка драйвера и соединения
+                // Загружаем драйвер и устанавливаем соединение
                 Class.forName("com.mysql.cj.jdbc.Driver");
                 connection = DriverManager.getConnection(url, user, password);
-
-                System.out.println("✅ Соединение с базой данных установлено успешно.");
+                logger.info("✅ Соединение с базой данных установлено успешно: " + url);
             } catch (ClassNotFoundException ex) {
-                System.err.println("❌ JDBC-драйвер не найден: " + ex.getMessage());
+                logger.log(Level.SEVERE, "❌ JDBC-драйвер не найден: " + ex.getMessage(), ex);
             } catch (SQLException ex) {
-                System.err.println("❌ Ошибка подключения к базе данных: " + ex.getMessage());
+                logger.log(Level.SEVERE, "❌ Ошибка подключения к базе данных: " + ex.getMessage(), ex);
             }
         }
         return connection;
@@ -49,22 +62,8 @@ public class MySqlDbService implements DbService {
         try {
             return connection == null || connection.isClosed();
         } catch (SQLException e) {
-            System.err.println("❌ Ошибка проверки соединения: " + e.getMessage());
+            logger.log(Level.SEVERE, "❌ Ошибка проверки соединения: " + e.getMessage(), e);
             return true;
         }
-    }
-    public <T> T fromBody(HttpServletRequest req, Class<T> classOfT) throws IOException {
-        String charsetName = req.getCharacterEncoding();
-
-        //  Если кодировка не указана, устанавливаем UTF-8
-        if (charsetName == null) {
-            charsetName = StandardCharsets.UTF_8.name();
-        }
-
-        //  Читаем тело запроса и конвертируем в строку с корректной кодировкой
-        String json = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-
-        //  Десериализуем JSON в объект нужного класса
-        return gson.fromJson(json, classOfT);
     }
 }
