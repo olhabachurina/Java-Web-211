@@ -73,64 +73,66 @@ public class HomeServlet extends HttpServlet {
         int statusCode = 200;
 
         try {
+            // Перевірка, чи всі залежності завантажені через DI
             if (randomService == null || dateTimeService == null || kdfService == null
                     || dataContext == null || configService == null) {
-                throw new IllegalStateException("Не удалось загрузить все зависимости через Guice.");
+                throw new IllegalStateException("Не вдалося завантажити всі залежності через Guice.");
             }
 
-            // Инициализация БД (создание таблиц, базовых ролей и т.п.)
+            // Ініціалізація бази даних (створення таблиць, базових ролей тощо)
             dataContext.initializeRolesAndAccess();
 
-            // Получаем параметры из конфигурации
-            int lifetime = configService.getInt("jwt.lifetime");      // пример: 100
-            String db = configService.getString("db.MySql.dbms");         // пример: "MySql"
-            String host = configService.getString("db.MySql.host");       // пример: "localhost"
+            // Отримання параметрів з конфігурації
+            int lifetime = configService.getInt("jwt.lifetime");          // приклад: 100
+            String db = configService.getString("db.MySql.dbms");             // приклад: "MySql"
+            String host = configService.getString("db.MySql.host");           // приклад: "localhost"
+            // Отримання значення для storage.path з appsettings.json
+            String storagePath = configService.getString("storage.path");     // приклад: "C:/storage/Java211/"
 
-            // Пример получения "someConfigKey" (если нужно)
-            // String someConfig = configService.getString("someConfigKey");
-
-            // Генерация случайного числа
+            // Генерація випадкового числа
             int randomNumber = randomService.randomInt();
 
-            // Генерация случайной строки (длина 9 символов, как в примере)
+            // Генерація випадкового рядка (довжина 9 символів)
             String randomString = randomService.randomString(9);
 
-            // Генерация случайного имени файла
+            // Генерація випадкового імені файлу (довжина 12 символів)
             String randomFileName = randomService.randomFileName(12);
 
-            // Хэширование сообщения
+            // Хешування повідомлення
             String hashedMessage = kdfService.dk("123", "456");
 
-            // Создание таблиц через DataContext
+            // Створення таблиць через DataContext
             boolean tablesCreated = dataContext.installTables();
             String tablesMessage = tablesCreated
                     ? "install ok"
-                    : "Ошибка при создании таблиц. Проверьте логи для деталей.";
+                    : "Помилка при створенні таблиць. Перевірте логи для деталей.";
 
-            // Получение данных через UserDao
+            // Отримання даних через UserDao
             String currentTime = dataContext.getUserDao().fetchCurrentTime();
             String databases = dataContext.getUserDao().fetchDatabases();
 
-            // Формируем итоговый JSON-ответ
-            response.put("tablesMessage", tablesMessage);                       // "install ok"
+            // Формування фінального JSON-відповіді
+            response.put("tablesMessage", tablesMessage);                    // "install ok"
             response.put("currentTime", currentTime != null ? currentTime : "");
-            response.put("databases", databases != null ? databases : "");      // "information_schema, java221, performance_schema"
-            response.put("randomNumber", randomNumber);                         // "1656679532"
-            response.put("randomString", randomString);                         // "7lVJgZItc8"
-            response.put("randomFileName", randomFileName);                     // "a7739a249fea.txt"
-            response.put("hashedMessage", hashedMessage);                       // "85ec1a9b766c9a39d42bd10cfa7fb66f2bd45e6563320d2a9fdc63fd0a5cd1f0"
+            response.put("databases", databases != null ? databases : "");     // "information_schema, java221, performance_schema"
+            response.put("randomNumber", randomNumber);                        // наприклад: 1656679532
+            response.put("randomString", randomString);                        // наприклад: "7lVJgZItc8"
+            response.put("randomFileName", randomFileName);                    // наприклад: "a7739a249fea.txt"
+            response.put("hashedMessage", hashedMessage);                      // наприклад: "85ec1a9b766c9a39d42bd10cfa7fb66f2bd45e6563320d2a9fdc63fd0a5cd1f0"
             response.put("message", "Запит виконано успішно.");
-            response.put("lifetime", lifetime);                                 // "100"
-            response.put("db", db);                                             // "MySql"
-            response.put("host", host);                                         // "localhost"
+            response.put("lifetime", lifetime);                                // "100"
+            response.put("db", db);                                            // "MySql"
+            response.put("host", host);                                        // "localhost"
+            // Додаємо вивід значення storage.path
+            response.put("storagePath", storagePath);                          // "C:/storage/Java211/"
             response.put("status", statusCode);
         } catch (IllegalStateException e) {
-            LOGGER.log(Level.SEVERE, "Ошибка загрузки зависимостей", e);
-            response.put("message", "Ошибка загрузки зависимостей: " + e.getMessage());
+            LOGGER.log(Level.SEVERE, "Помилка завантаження залежностей", e);
+            response.put("message", "Помилка завантаження залежностей: " + e.getMessage());
             statusCode = 500;
             response.put("status", statusCode);
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Неожиданная ошибка", e);
+            LOGGER.log(Level.SEVERE, "Несподівана помилка", e);
             response.put("message", "Виникла несподівана помилка: " + e.getMessage());
             statusCode = 500;
             response.put("status", statusCode);
