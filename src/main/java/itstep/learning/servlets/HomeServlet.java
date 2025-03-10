@@ -4,7 +4,11 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import itstep.learning.dal.dao.CategoryDao;
 import itstep.learning.dal.dao.DataContext;
+import itstep.learning.dal.dao.ProductDao;
+import itstep.learning.dal.dto.Category;
+import itstep.learning.dal.dto.Product;
 import itstep.learning.services.DbService.DbService;
 import itstep.learning.services.config.ConfigService;
 import itstep.learning.services.hash.HashService;
@@ -20,6 +24,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.sql.*;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import com.google.inject.Inject;
@@ -33,7 +38,7 @@ import java.util.logging.Logger;
 
 
 @Singleton
-@WebServlet("/home")
+/*@WebServlet("/home")*/
 public class HomeServlet extends HttpServlet {
     private static final Logger LOGGER = Logger.getLogger(HomeServlet.class.getName());
 
@@ -42,27 +47,25 @@ public class HomeServlet extends HttpServlet {
     private final KdfService kdfService;
     private final DataContext dataContext;
     private final ConfigService configService;
-
+    private final CategoryDao categoryDao;  // ✅ Додано CategoryDao
+    private final ProductDao productDao;
     @Inject
     public HomeServlet(RandomService randomService,
                        DateTimeService dateTimeService,
                        KdfService kdfService,
                        DataContext dataContext,
-                       ConfigService configService) {
+                       ConfigService configService,
+                       CategoryDao categoryDao, ProductDao productDao) { // ✅ Інжектимо CategoryDao
         this.randomService = randomService;
         this.dateTimeService = dateTimeService;
         this.kdfService = kdfService;
         this.dataContext = dataContext;
         this.configService = configService;
+        this.categoryDao = categoryDao;
+        this.productDao = productDao;
     }
 
-    public HomeServlet() {
-        this.randomService = null;
-        this.dateTimeService = null;
-        this.kdfService = null;
-        this.dataContext = null;
-        this.configService = null;
-    }
+
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -73,67 +76,73 @@ public class HomeServlet extends HttpServlet {
         int statusCode = 200;
 
         try {
-            // Перевірка, чи всі залежності завантажені через DI
+            // ✅ Перевірка, чи всі залежності завантажені
             if (randomService == null || dateTimeService == null || kdfService == null
-                    || dataContext == null || configService == null) {
-                throw new IllegalStateException("Не вдалося завантажити всі залежності через Guice.");
+                    || dataContext == null || configService == null || categoryDao == null || productDao == null) {
+                throw new IllegalStateException("❌ Не вдалося завантажити всі залежності.");
+
             }
 
-            // Ініціалізація бази даних (створення таблиць, базових ролей тощо)
-            dataContext.initializeRolesAndAccess();
-
-            // Отримання параметрів з конфігурації
-            int lifetime = configService.getInt("jwt.lifetime");          // приклад: 100
-            String db = configService.getString("db.MySql.dbms");             // приклад: "MySql"
-            String host = configService.getString("db.MySql.host");           // приклад: "localhost"
-            // Отримання значення для storage.path з appsettings.json
-            String storagePath = configService.getString("storage.path");     // приклад: "C:/storage/Java211/"
-
-            // Генерація випадкового числа
-            int randomNumber = randomService.randomInt();
-
-            // Генерація випадкового рядка (довжина 9 символів)
-            String randomString = randomService.randomString(9);
-
-            // Генерація випадкового імені файлу (довжина 12 символів)
-            String randomFileName = randomService.randomFileName(12);
-
-            // Хешування повідомлення
-            String hashedMessage = kdfService.dk("123", "456");
-
-            // Створення таблиць через DataContext
+            // ✅ Створення таблиць
             boolean tablesCreated = dataContext.installTables();
             String tablesMessage = tablesCreated
                     ? "install ok"
-                    : "Помилка при створенні таблиць. Перевірте логи для деталей.";
+                    : "❌ Помилка при створенні таблиць. Перевірте логи.";
 
-            // Отримання даних через UserDao
+            // ✅ Створення таблиці категорій
+            boolean categoriesTableCreated = categoryDao.installTables();
+            String categoriesMessage = categoriesTableCreated
+                    ? "✅ Таблиця 'categories' успішно створена."
+                    : "❌ Помилка при створенні таблиці 'categories'.";
+
+            // ✅ Отримання категорій
+            List<Category> categories = categoryDao.getAllCategories();
+            int categoriesCount = categories.size();
+            boolean productsTableCreated = productDao.installTables(); // ✅ Добавлен вызов installTables() для products
+            String productsMessage = productsTableCreated ? "✅ Таблиця 'products' створена." : "❌ Помилка при створенні 'products'.";
+            // ✅ Отримання інших параметрів
+            int lifetime = configService.getInt("jwt.lifetime");
+            String db = configService.getString("db.MySql.dbms");
+            String host = configService.getString("db.MySql.host");
+            String storagePath = configService.getString("storage.path");
+            List<Product> products = productDao.getAllProducts();
+            int productsCount = products.size(); // ✅ Количество товаров
+            int randomNumber = randomService.randomInt();
+            String randomString = randomService.randomString(9);
+            String randomFileName = randomService.randomFileName(12);
+            String hashedMessage = kdfService.dk("123", "456");
+
+            // ✅ Отримання часу та баз даних
             String currentTime = dataContext.getUserDao().fetchCurrentTime();
             String databases = dataContext.getUserDao().fetchDatabases();
 
-            // Формування фінального JSON-відповіді
-            response.put("tablesMessage", tablesMessage);                    // "install ok"
+            // ✅ Формування відповіді
+            response.put("tablesMessage", tablesMessage);
+            response.put("categoriesMessage", categoriesMessage);
+            response.put("categoriesCount", categoriesCount); // ✅ Кількість категорій
+            response.put("productsMessage", productsMessage);
+            response.put("productsCount", productsCount);
             response.put("currentTime", currentTime != null ? currentTime : "");
-            response.put("databases", databases != null ? databases : "");     // "information_schema, java221, performance_schema"
-            response.put("randomNumber", randomNumber);                        // наприклад: 1656679532
-            response.put("randomString", randomString);                        // наприклад: "7lVJgZItc8"
-            response.put("randomFileName", randomFileName);                    // наприклад: "a7739a249fea.txt"
-            response.put("hashedMessage", hashedMessage);                      // наприклад: "85ec1a9b766c9a39d42bd10cfa7fb66f2bd45e6563320d2a9fdc63fd0a5cd1f0"
+            response.put("databases", databases != null ? databases : "");
+            response.put("randomNumber", randomNumber);
+            response.put("randomString", randomString);
+            response.put("randomFileName", randomFileName);
+            response.put("hashedMessage", hashedMessage);
             response.put("message", "Запит виконано успішно.");
-            response.put("lifetime", lifetime);                                // "100"
-            response.put("db", db);                                            // "MySql"
-            response.put("host", host);                                        // "localhost"
-            // Додаємо вивід значення storage.path
-            response.put("storagePath", storagePath);                          // "C:/storage/Java211/"
+            response.put("lifetime", lifetime);
+            response.put("db", db);
+            response.put("host", host);
+            response.put("storagePath", storagePath);
             response.put("status", statusCode);
+
         } catch (IllegalStateException e) {
             LOGGER.log(Level.SEVERE, "Помилка завантаження залежностей", e);
-            response.put("message", "Помилка завантаження залежностей: " + e.getMessage());
+            response.put("message", "❌ Помилка завантаження залежностей: " + e.getMessage());
             statusCode = 500;
             response.put("status", statusCode);
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Несподівана помилка", e);
-            response.put("message", "Виникла несподівана помилка: " + e.getMessage());
+            LOGGER.log(Level.SEVERE, "❌ Несподівана помилка", e);
+            response.put("message", "❌ Виникла несподівана помилка: " + e.getMessage());
             statusCode = 500;
             response.put("status", statusCode);
         }
@@ -237,13 +246,13 @@ public class HomeServlet extends HttpServlet {
  Приклад асинхронного запиту до API:
 
  async function fetchData() {
-     try {
-         let response = await fetch("https://api.example.com/data");
-         let data = await response.json();
-         console.log("Отримані дані:", data);
-     } catch (error) {
-         console.error("Помилка запиту:", error);
-     }
+ try {
+ let response = await fetch("https://api.example.com/data");
+ let data = await response.json();
+ console.log("Отримані дані:", data);
+ } catch (error) {
+ console.error("Помилка запиту:", error);
+ }
  }
  fetchData();
 
@@ -253,4 +262,4 @@ public class HomeServlet extends HttpServlet {
  - Виконання тривалих операцій без блокування інтерфейсу.
  - Обробка великого обсягу даних у фоновому режимі.
  - Паралельні обчислення для покращення продуктивності.
-*/
+ */

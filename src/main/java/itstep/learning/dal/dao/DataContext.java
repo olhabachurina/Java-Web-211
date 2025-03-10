@@ -2,11 +2,13 @@ package itstep.learning.dal.dao;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import itstep.learning.dal.dto.Category;
 import itstep.learning.services.DbService.DbService;
 
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 @Singleton

@@ -50,20 +50,21 @@ public class LoginServlet extends HttpServlet {
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        LOGGER.info("Получен POST-запрос на аутентификацию");
+        LOGGER.info("🔐 Получен POST-запрос на аутентификацию");
         setupResponseHeaders(resp);
 
         String authHeader = req.getHeader("Authorization");
         if (authHeader == null || !authHeader.startsWith("Basic ")) {
-            sendJsonResponse(resp, 401, Map.of("error", "Отсутствует заголовок Authorization"));
+            sendJsonResponse(resp, 401, Map.of("error", "⛔ Отсутствует заголовок Authorization"));
             return;
         }
 
         String base64Credentials = authHeader.substring("Basic ".length());
         String credentials = new String(Base64.getDecoder().decode(base64Credentials), StandardCharsets.UTF_8);
         String[] parts = credentials.split(":", 2);
+
         if (parts.length != 2) {
-            sendJsonResponse(resp, 400, Map.of("error", "Неверный формат логина и пароля"));
+            sendJsonResponse(resp, 400, Map.of("error", "⛔ Неверный формат логина и пароля"));
             return;
         }
 
@@ -71,23 +72,38 @@ public class LoginServlet extends HttpServlet {
         String password = parts[1];
 
         try (Connection connection = DriverManager.getConnection(CONNECTION_STRING, DB_USER, DB_PASSWORD)) {
-            LOGGER.info("Установлено подключение к БД для авторизации");
+            LOGGER.info("✅ Установлено подключение к БД для авторизации");
 
+            // Получаем пользователя по логину
             User userShort = getUserByLogin(connection, login);
-            if (userShort == null || !BCrypt.checkpw(password, userShort.getPassword())) {
-                sendJsonResponse(resp, 401, Map.of("error", "Неверный логин или пароль"));
+            if (userShort == null) {
+                sendJsonResponse(resp, 401, Map.of("error", "⛔ Неверный логин или пользователь не найден"));
                 return;
             }
 
-            LOGGER.info("✅ Успешная авторизация пользователя: " + login);
+            // Проверка пароля
+            if (!BCrypt.checkpw(password, userShort.getPassword())) {
+                sendJsonResponse(resp, 401, Map.of("error", "⛔ Неверный пароль"));
+                return;
+            }
 
+            // Подгружаем полные данные пользователя (включая role)
             User fullUser = getUserById(connection, userShort.getId());
             if (fullUser == null) {
-                sendJsonResponse(resp, 500, Map.of("error", "Не удалось получить полные данные пользователя"));
+                sendJsonResponse(resp, 500, Map.of("error", "⛔ Не удалось получить полные данные пользователя"));
                 return;
             }
 
-            // Формирование полезной нагрузки для JWT
+            // ✅ ПРОВЕРКА РОЛИ
+            if (fullUser.getRole() == null || fullUser.getRole().isBlank()) {
+                LOGGER.warning("⛔ Пользователь без роли: " + login);
+                sendJsonResponse(resp, 403, Map.of("error", "Роль не установлена. Обратитесь к администратору."));
+                return;
+            }
+
+            LOGGER.info("✅ Успешная авторизация пользователя: " + login + " с ролью: " + fullUser.getRole());
+
+            // Формирование payload для JWT
             JsonObject payload = new JsonObject();
             payload.addProperty("user_id", fullUser.getId());
             payload.addProperty("login", fullUser.getLogin());
@@ -102,6 +118,7 @@ public class LoginServlet extends HttpServlet {
             );
 
             sendJsonResponse(resp, 200, responseData);
+
         } catch (SQLException ex) {
             LOGGER.log(Level.SEVERE, "❌ Ошибка базы данных при авторизации", ex);
             sendJsonResponse(resp, 500, Map.of("error", "Ошибка базы данных"));
@@ -114,7 +131,7 @@ public class LoginServlet extends HttpServlet {
             statement.setString(1, login);
             try (ResultSet rs = statement.executeQuery()) {
                 if (rs.next()) {
-                    return User.fromResultSet(rs);
+                    return User.fromResultSet(rs); // ✅ Убедись, что сюда попадает password
                 }
             }
         }
@@ -122,19 +139,23 @@ public class LoginServlet extends HttpServlet {
     }
 
     private User getUserById(Connection connection, Long userId) throws SQLException {
-        String sql = "SELECT * FROM users WHERE id = ?";
+        String sql = "SELECT u.*, ua.role_id FROM users u " +
+                "LEFT JOIN users_access ua ON u.id = ua.user_id " +
+                "WHERE u.id = ?";
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setLong(1, userId);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    User user = User.fromResultSet(rs);
+                    User user = User.fromResultSet(rs); // ✅ Здесь также учитывай role
+                    user.setRole(rs.getString("role_id"));
 
                     // Загружаем emails и телефоны
                     user.setEmails(getUserEmails(connection, userId));
                     user.setPhones(getUserPhones(connection, userId));
 
                     LOGGER.info("🔍 Загружены данные пользователя ID=" + userId +
-                            ": Emails=" + user.getEmails() +
+                            ": Role=" + user.getRole() +
+                            ", Emails=" + user.getEmails() +
                             ", Phones=" + user.getPhones());
 
                     return user;
@@ -155,7 +176,7 @@ public class LoginServlet extends HttpServlet {
                 }
             }
         }
-        return emails.isEmpty() ? Collections.emptyList() : emails;
+        return emails;
     }
 
     private List<String> getUserPhones(Connection connection, Long userId) throws SQLException {
@@ -169,7 +190,7 @@ public class LoginServlet extends HttpServlet {
                 }
             }
         }
-        return phones.isEmpty() ? Collections.emptyList() : phones;
+        return phones;
     }
 
     private void setupResponseHeaders(HttpServletResponse resp) {
@@ -183,7 +204,7 @@ public class LoginServlet extends HttpServlet {
         resp.setStatus(statusCode);
         resp.setContentType("application/json;charset=UTF-8");
         resp.getWriter().write(gson.toJson(data));
-        LOGGER.info("📤 Отправлен HTTP " + statusCode + ": " + gson.toJson(data));
+        LOGGER.info("📤 Ответ отправлен [" + statusCode + "]: " + gson.toJson(data));
     }
 
     @Override

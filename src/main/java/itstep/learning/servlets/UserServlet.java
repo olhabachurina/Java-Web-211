@@ -43,7 +43,7 @@ public class UserServlet extends HttpServlet {
     private static final Logger LOGGER = Logger.getLogger(UserServlet.class.getName());
     private UserDao userDao;
     private Connection connection;
-
+    private String role;
     @Inject
     private JwtService jwtService;
 

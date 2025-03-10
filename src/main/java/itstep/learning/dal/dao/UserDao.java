@@ -509,15 +509,86 @@ public class UserDao {
     }
 
     public User getUserById(long userId) throws SQLException {
-        String query = "SELECT id, name, login FROM users WHERE id = ?";
+        String query = """
+        SELECT 
+            u.id, 
+            u.name, 
+            u.login,
+            u.city, 
+            u.address, 
+            u.birthdate,
+            u.registration_date,
+            ua.role_id,
+            u.is_email_confirmed,
+            u.email_confirmation_token
+        FROM users u
+        LEFT JOIN users_access ua ON u.id = ua.user_id
+        WHERE u.id = ?
+    """;
+
         try (PreparedStatement stmt = connection.prepareStatement(query)) {
             stmt.setLong(1, userId);
+
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return new User(rs.getLong("id"), rs.getString("name"), rs.getString("login"));
+                    User user = new User();
+
+                    user.setId(rs.getLong("id"));
+                    user.setName(rs.getString("name"));
+                    user.setLogin(rs.getString("login"));
+                    user.setCity(rs.getString("city"));
+                    user.setAddress(rs.getString("address"));
+                    user.setBirthdate(String.valueOf(rs.getDate("birthdate").toLocalDate())); // ✔
+                    user.setRegistrationDate(Timestamp.valueOf(rs.getTimestamp("registration_date").toLocalDateTime()));
+                    user.setRole(rs.getString("role_id"));
+
+                    user.setEmailConfirmed(rs.getBoolean("is_email_confirmed"));
+                    user.setEmailConfirmationToken(rs.getString("email_confirmation_token"));
+
+                    // ✔ Подгружаем emails и phones
+                    user.setEmails(getEmailsForUser(userId));
+                    user.setPhones(getPhonesForUser(userId));
+
+                    return user;
                 }
             }
         }
+
         return null;
     }
+
+    private List<String> getEmailsForUser(long userId) throws SQLException {
+        List<String> emails = new ArrayList<>();
+        String query = "SELECT email FROM user_emails WHERE user_id = ?";
+
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setLong(1, userId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    emails.add(rs.getString("email"));
+                }
+            }
+        }
+
+        return emails;
+    }
+
+    private List<String> getPhonesForUser(long userId) throws SQLException {
+        List<String> phones = new ArrayList<>();
+        String query = "SELECT phone FROM user_phones WHERE user_id = ?";
+
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setLong(1, userId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    phones.add(rs.getString("phone"));
+                }
+            }
+        }
+
+        return phones;
+    }
+
 }

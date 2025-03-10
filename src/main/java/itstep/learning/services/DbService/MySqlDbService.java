@@ -29,33 +29,27 @@ public class MySqlDbService implements DbService {
 
     @Override
     public Connection getConnection() {
-        if (connection == null || isConnectionClosed()) {
-            try {
-                // Используем правильные пути к параметрам конфигурации
-                String host = configService.getString("db.MySql.host");
-                int port = configService.getInt("db.MySql.port");
-                String database = configService.getString("db.MySql.schema");
-                String user = configService.getString("db.MySql.user");
-                String password = configService.getString("db.MySql.password");
-                String params = configService.getString("db.MySql.params");
+        try {
+            String host = configService.getString("db.MySql.host");
+            int port = configService.getInt("db.MySql.port");
+            String database = configService.getString("db.MySql.schema");
+            String user = configService.getString("db.MySql.user");
+            String password = configService.getString("db.MySql.password");
+            String params = configService.getString("db.MySql.params");
 
-                // Формируем URL подключения
-                String url = "jdbc:mysql://" + host + ":" + port + "/" + database
-                        + "?useSSL=false"
-                        + "&serverTimezone=UTC"
-                        + "&" + params;
+            String url = "jdbc:mysql://" + host + ":" + port + "/" + database
+                    + "?useSSL=false"
+                    + "&serverTimezone=UTC"
+                    + "&allowPublicKeyRetrieval=true"
+                    + "&" + params;
 
-                // Загружаем драйвер и устанавливаем соединение
-                Class.forName("com.mysql.cj.jdbc.Driver");
-                connection = DriverManager.getConnection(url, user, password);
-                logger.info("✅ Соединение с базой данных установлено успешно: " + url);
-            } catch (ClassNotFoundException ex) {
-                logger.log(Level.SEVERE, "❌ JDBC-драйвер не найден: " + ex.getMessage(), ex);
-            } catch (SQLException ex) {
-                logger.log(Level.SEVERE, "❌ Ошибка подключения к базе данных: " + ex.getMessage(), ex);
-            }
+            Class.forName("com.mysql.cj.jdbc.Driver");
+            logger.info("✅ Устанавливаем новое соединение с БД: " + url);
+            return DriverManager.getConnection(url, user, password);
+        } catch (ClassNotFoundException | SQLException e) {
+            logger.log(Level.SEVERE, "❌ Ошибка подключения к базе данных: " + e.getMessage(), e);
+            throw new RuntimeException("Не удалось подключиться к БД", e);
         }
-        return connection;
     }
 
     private boolean isConnectionClosed() {
