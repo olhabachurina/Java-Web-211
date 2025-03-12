@@ -7,6 +7,7 @@ import com.google.inject.Singleton;
 import itstep.learning.dal.dao.CategoryDao;
 import itstep.learning.dal.dao.DataContext;
 import itstep.learning.dal.dao.ProductDao;
+import itstep.learning.dal.dao.UserDao;
 import itstep.learning.dal.dto.Category;
 import itstep.learning.dal.dto.Product;
 import itstep.learning.services.DbService.DbService;
@@ -16,6 +17,7 @@ import itstep.learning.services.hash.Md5HashService;
 import itstep.learning.services.kdf.KdfService;
 import itstep.learning.services.random.DateTimeService;
 import itstep.learning.services.random.RandomService;
+import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -32,6 +34,7 @@ import com.google.inject.Singleton;
 import com.google.gson.Gson;
 
 
+import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -40,6 +43,7 @@ import java.util.logging.Logger;
 @Singleton
 /*@WebServlet("/home")*/
 public class HomeServlet extends HttpServlet {
+
     private static final Logger LOGGER = Logger.getLogger(HomeServlet.class.getName());
 
     private final RandomService randomService;
@@ -47,15 +51,17 @@ public class HomeServlet extends HttpServlet {
     private final KdfService kdfService;
     private final DataContext dataContext;
     private final ConfigService configService;
-    private final CategoryDao categoryDao;  // ✅ Додано CategoryDao
+    private final CategoryDao categoryDao;
     private final ProductDao productDao;
+
     @Inject
     public HomeServlet(RandomService randomService,
                        DateTimeService dateTimeService,
                        KdfService kdfService,
                        DataContext dataContext,
                        ConfigService configService,
-                       CategoryDao categoryDao, ProductDao productDao) { // ✅ Інжектимо CategoryDao
+                       CategoryDao categoryDao,
+                       ProductDao productDao) {
         this.randomService = randomService;
         this.dateTimeService = dateTimeService;
         this.kdfService = kdfService;
@@ -64,8 +70,6 @@ public class HomeServlet extends HttpServlet {
         this.categoryDao = categoryDao;
         this.productDao = productDao;
     }
-
-
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -76,67 +80,75 @@ public class HomeServlet extends HttpServlet {
         int statusCode = 200;
 
         try {
-            // ✅ Перевірка, чи всі залежності завантажені
             if (randomService == null || dateTimeService == null || kdfService == null
                     || dataContext == null || configService == null || categoryDao == null || productDao == null) {
                 throw new IllegalStateException("❌ Не вдалося завантажити всі залежності.");
-
             }
 
-            // ✅ Створення таблиць
+            LOGGER.info("✅ Усі залежності завантажені успішно");
+
             boolean tablesCreated = dataContext.installTables();
-            String tablesMessage = tablesCreated
-                    ? "install ok"
-                    : "❌ Помилка при створенні таблиць. Перевірте логи.";
+            LOGGER.info("✅ Створення основних таблиць: " + tablesCreated);
 
-            // ✅ Створення таблиці категорій
             boolean categoriesTableCreated = categoryDao.installTables();
-            String categoriesMessage = categoriesTableCreated
-                    ? "✅ Таблиця 'categories' успішно створена."
-                    : "❌ Помилка при створенні таблиці 'categories'.";
+            LOGGER.info("✅ Створення таблиці категорій: " + categoriesTableCreated);
 
-            // ✅ Отримання категорій
+            boolean productsTableCreated = productDao.installTables();
+            LOGGER.info("✅ Створення таблиці продуктів: " + productsTableCreated);
+
             List<Category> categories = categoryDao.getAllCategories();
             int categoriesCount = categories.size();
-            boolean productsTableCreated = productDao.installTables(); // ✅ Добавлен вызов installTables() для products
-            String productsMessage = productsTableCreated ? "✅ Таблиця 'products' створена." : "❌ Помилка при створенні 'products'.";
-            // ✅ Отримання інших параметрів
+            LOGGER.info("📦 Категорій отримано: " + categoriesCount);
+
+            List<Product> products = productDao.getAllProducts();
+            int productsCount = products.size();
+            LOGGER.info("🛍️ Продуктів отримано: " + productsCount);
+
             int lifetime = configService.getInt("jwt.lifetime");
             String db = configService.getString("db.MySql.dbms");
             String host = configService.getString("db.MySql.host");
             String storagePath = configService.getString("storage.path");
-            List<Product> products = productDao.getAllProducts();
-            int productsCount = products.size(); // ✅ Количество товаров
+
+            LOGGER.info("⚙️ Конфіг: jwt.lifetime=" + lifetime + ", db=" + db + ", host=" + host + ", storagePath=" + storagePath);
+
             int randomNumber = randomService.randomInt();
             String randomString = randomService.randomString(9);
             String randomFileName = randomService.randomFileName(12);
             String hashedMessage = kdfService.dk("123", "456");
 
-            // ✅ Отримання часу та баз даних
+            LOGGER.info("🔐 Згенеровано випадкові дані: number=" + randomNumber + ", string=" + randomString + ", fileName=" + randomFileName);
+
             String currentTime = dataContext.getUserDao().fetchCurrentTime();
             String databases = dataContext.getUserDao().fetchDatabases();
 
-            // ✅ Формування відповіді
-            response.put("tablesMessage", tablesMessage);
-            response.put("categoriesMessage", categoriesMessage);
-            response.put("categoriesCount", categoriesCount); // ✅ Кількість категорій
-            response.put("productsMessage", productsMessage);
+            LOGGER.info("🕒 Поточний час БД: " + currentTime);
+            LOGGER.info("💾 Бази даних: " + databases);
+
+            response.put("tablesMessage", tablesCreated ? "✅ Основні таблиці створено" : "❌ Помилка створення основних таблиць");
+            response.put("categoriesMessage", categoriesTableCreated ? "✅ Таблиця 'categories' створена" : "❌ Помилка створення 'categories'");
+            response.put("productsMessage", productsTableCreated ? "✅ Таблиця 'products' створена" : "❌ Помилка створення 'products'");
+
+            response.put("categoriesCount", categoriesCount);
             response.put("productsCount", productsCount);
-            response.put("currentTime", currentTime != null ? currentTime : "");
-            response.put("databases", databases != null ? databases : "");
+
+            response.put("currentTime", currentTime != null ? currentTime : "N/A");
+            response.put("databases", databases != null ? databases : "N/A");
+
             response.put("randomNumber", randomNumber);
             response.put("randomString", randomString);
             response.put("randomFileName", randomFileName);
             response.put("hashedMessage", hashedMessage);
-            response.put("message", "Запит виконано успішно.");
+
             response.put("lifetime", lifetime);
             response.put("db", db);
             response.put("host", host);
             response.put("storagePath", storagePath);
+
+            response.put("message", "✅ Запит виконано успішно");
             response.put("status", statusCode);
 
         } catch (IllegalStateException e) {
-            LOGGER.log(Level.SEVERE, "Помилка завантаження залежностей", e);
+            LOGGER.log(Level.SEVERE, "❌ Помилка завантаження залежностей", e);
             response.put("message", "❌ Помилка завантаження залежностей: " + e.getMessage());
             statusCode = 500;
             response.put("status", statusCode);
@@ -147,16 +159,21 @@ public class HomeServlet extends HttpServlet {
             response.put("status", statusCode);
         }
 
+        String jsonResponse = new Gson().toJson(response);
+        LOGGER.info("📤 Відповідь на GET /home: " + jsonResponse);
+
         resp.setStatus(statusCode);
-        resp.getWriter().print(new Gson().toJson(response));
+        resp.getWriter().print(jsonResponse);
     }
 
     private void setCorsHeaders(HttpServletResponse resp) {
         resp.setHeader("Access-Control-Allow-Origin", "*");
-        resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        resp.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
         resp.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 }
+
+
 /**
  * IoC (Inversion of Control) — Інверсія управління
  * Архітектурний патерн, за яким управління (життєвим циклом об'єктів)

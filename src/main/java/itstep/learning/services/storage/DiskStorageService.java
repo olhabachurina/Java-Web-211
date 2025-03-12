@@ -19,10 +19,7 @@ public class DiskStorageService implements StorageService {
 
     @Inject
     public DiskStorageService(JsonConfigService configService) {
-        // Отримуємо шлях до сховища з конфігурації
         this.storagePath = Paths.get(configService.getString("storage.path"));
-
-        // Створюємо директорію, якщо вона відсутня
         try {
             Files.createDirectories(storagePath);
         } catch (IOException e) {
@@ -67,5 +64,27 @@ public class DiskStorageService implements StorageService {
         }
 
         return new BufferedInputStream(new FileInputStream(filePath.toFile()));
+    }
+
+    @Override
+    public boolean delete(String itemId) {
+        if (itemId == null || itemId.contains("..")) {
+            throw new IllegalArgumentException("Некоректне ім'я файлу: " + itemId);
+        }
+
+        Path filePath = storagePath.resolve(itemId);
+
+        try {
+            boolean deleted = Files.deleteIfExists(filePath);
+            if (deleted) {
+                LOGGER.info("🗑️ Файл успішно видалено: " + filePath);
+            } else {
+                LOGGER.warning("⚠️ Файл не знайдено для видалення: " + filePath);
+            }
+            return deleted;
+        } catch (IOException e) {
+            LOGGER.severe("❌ Помилка при видаленні файлу " + filePath + ": " + e.getMessage());
+            return false;
+        }
     }
 }

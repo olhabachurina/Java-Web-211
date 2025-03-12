@@ -15,6 +15,7 @@ import java.util.logging.Logger;
 
 @Singleton
 public class CategoryDao {
+
     private final DbService dbService;
     private final Logger logger;
 
@@ -51,6 +52,7 @@ public class CategoryDao {
 
         return categories;
     }
+
 
     // ✅ Отримання категорії за ID
     public Category getCategoryById(UUID categoryId) {
@@ -101,7 +103,7 @@ public class CategoryDao {
 
             logger.info("✅ Таблиця 'categories' успішно створена або вже існує.");
 
-            return seedData();
+            return seedData(); // Повертаємо результат seedData()
 
         } catch (SQLException e) {
             logger.log(Level.SEVERE, "❌ Помилка при створенні таблиці 'categories': " + e.getMessage(), e);
@@ -112,11 +114,6 @@ public class CategoryDao {
     // ✅ Заповнення таблиці тестовими категоріями
     public boolean seedData() {
         String checkSql = "SELECT COUNT(*) FROM categories";
-        String sql = "INSERT IGNORE INTO categories (category_id, category_slug, category_title, category_description, category_image_id, category_delete_moment) VALUES "
-                + "('14780dcf-fb75-11ef-90a1-62517600596c', 'glass', 'Вироби зі скла', 'Декоративні вироби зі скла', 'glass.jpg', NULL), "
-                + "('24780dcf-fb75-11ef-90a1-62517600596c', 'office', 'Офісні товари', 'Настільні сувеніри', 'office.jpg', NULL), "
-                + "('34780dcf-fb75-11ef-90a1-62517600596c', 'stone', 'Вироби з каменю', 'Декоративні вироби з каменю', 'stone.jpg', NULL), "
-                + "('44780dcf-fb75-11ef-90a1-62517600596c', 'wood', 'Вироби з дерева', 'Декоративні вироби з дерева', 'wood.jpg', NULL);";
 
         logger.info("🔍 Перевірка наявності даних у таблиці 'categories'...");
 
@@ -127,33 +124,101 @@ public class CategoryDao {
                 return false;
             }
 
+            boolean autoCommit = connection.getAutoCommit();
+            if (autoCommit) {
+                connection.setAutoCommit(false);
+                logger.info("🔄 AutoCommit вимкнено для транзакції seedData.");
+            }
+
+            int rowCount = 0;
+
             try (Statement checkStatement = connection.createStatement();
                  ResultSet resultSet = checkStatement.executeQuery(checkSql)) {
 
-                resultSet.next();
-                int rowCount = resultSet.getInt(1);
-
-                if (rowCount > 0) {
-                    logger.warning("⚠️ Дані вже існують у 'categories', вставка пропущена.");
-                    return false;
+                if (resultSet.next()) {
+                    rowCount = resultSet.getInt(1);
                 }
             }
 
-            logger.info("📄 Виконання SQL для вставки початкових категорій:\n" + sql);
+            if (rowCount > 0) {
+                logger.warning("⚠️ Дані вже існують у 'categories'. Seed пропущено.");
+                connection.rollback();
+                return true;
+            }
 
-            try (Statement statement = connection.createStatement()) {
-                int rowsInserted = statement.executeUpdate(sql);
+            logger.info("📝 Додаємо початкові категорії...");
 
-                logger.info("✅ Успішно вставлено " + rowsInserted + " категорій.");
+            // ✅ Список початкових категорій
+            List<Category> categories = List.of(
+                    new Category(UUID.fromString("14780dcf-fb75-11ef-90a1-62517600596c"), "glass", "Вироби зі скла", "Декоративні вироби зі скла", "image1.png"),
+                    new Category(UUID.fromString("24780dcf-fb75-11ef-90a1-62517600596c"), "office", "Офісні товари", "Настільні сувеніри", "image2.png"),
+                    new Category(UUID.fromString("34780dcf-fb75-11ef-90a1-62517600596c"), "stone", "Вироби з каменю", "Декоративні вироби з каменю", "image3.png"),
+                    new Category(UUID.fromString("44780dcf-fb75-11ef-90a1-62517600596c"), "wood", "Вироби з дерева", "Декоративні вироби з дерева", "image4.png")
+            );
+
+            String insertSql = "INSERT INTO categories " +
+                    "(category_id, category_slug, category_title, category_description, category_image_id, category_delete_moment) " +
+                    "VALUES (?, ?, ?, ?, ?, NULL)";
+
+            try (PreparedStatement stmt = connection.prepareStatement(insertSql)) {
+                for (Category category : categories) {
+                    stmt.setString(1, category.getCategoryId().toString());
+                    stmt.setString(2, category.getCategorySlug());
+                    stmt.setString(3, category.getCategoryTitle());
+                    stmt.setString(4, category.getCategoryDescription());
+                    stmt.setString(5, category.getCategoryImageId());
+
+                    stmt.addBatch();
+
+                    logger.info("✅ Підготовка вставки категорії: " +
+                            category.getCategoryTitle() + " (" + category.getCategoryImageId() + ")");
+                }
+
+                int[] rowsInserted = stmt.executeBatch();
+                logger.info("✅ Вставлено категорій: " + rowsInserted.length);
 
                 connection.commit();
                 logger.info("✅ Коміт успішно виконано.");
-                return true;
             }
+
+            if (autoCommit) {
+                connection.setAutoCommit(true);
+                logger.info("🔄 AutoCommit повернено до початкового стану.");
+            }
+
+            return true;
 
         } catch (SQLException ex) {
             logger.log(Level.SEVERE, "❌ Помилка при вставці тестових даних у 'categories': " + ex.getMessage(), ex);
             return false;
         }
     }
+    // ✅ Отримання категорії за SLUG
+    public Category getCategoryBySlug(String slug) {
+        String sql = "SELECT * FROM categories WHERE category_slug = ?";
+
+        logger.info("📥 Пошук категорії за SLUG: " + slug);
+
+        try (Connection connection = dbService.getConnection();
+             PreparedStatement stmt = connection.prepareStatement(sql)) {
+
+            stmt.setString(1, slug);
+            logger.info("📄 Виконання SQL запиту:\n" + sql);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    logger.info("✅ Категорія знайдена за SLUG: " + slug);
+                    return Category.fromResultSet(rs);
+                } else {
+                    logger.warning("⚠️ Категорія з SLUG " + slug + " не знайдена.");
+                }
+            }
+
+        } catch (SQLException e) {
+            logger.log(Level.SEVERE, "❌ Помилка при отриманні категорії за SLUG: " + e.getMessage(), e);
+        }
+
+        return null;
+    }
+
 }

@@ -13,8 +13,11 @@ public class ServletConfig extends ServletModule {
         serve("/time").with(TimeServlet.class);
         serve("/random").with(RandomServlet.class);
         serve("/users/*").with(UserServlet.class);
-        serve("/product").with(ProductServlet.class);
-       /* serve("/products").with(ProductServlet.class);*/
+        serve("/products").with(ProductServlet.class);
+        serve("/categories").with(ProductServlet.class);
+
+        serve("/storage/*").with(StorageServlet.class);
+
     }
 }
 

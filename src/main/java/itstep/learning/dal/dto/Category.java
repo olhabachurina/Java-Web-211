@@ -13,7 +13,14 @@ public class Category {
     private String categoryDescription;
     private String categoryImageId;
     private Date deleteMoment;
-
+    public Category(UUID categoryId, String categorySlug, String categoryTitle, String categoryDescription, String categoryImageId) {
+        this.categoryId = categoryId;
+        this.categorySlug = categorySlug;
+        this.categoryTitle = categoryTitle;
+        this.categoryDescription = categoryDescription;
+        this.categoryImageId = categoryImageId;
+        this.deleteMoment = null;  // или можно передать отдельным параметром
+    }
     // ✅ Конструктор без параметров (нужен для ORM или JSON-сериализации)
     public Category() {
         this.categoryId = UUID.randomUUID(); // Генерация уникального ID при создании
@@ -28,7 +35,14 @@ public class Category {
         this.categoryImageId = categoryImageId;
         this.deleteMoment = deleteMoment;
     }
-
+    public Category(UUID categoryId, String categorySlug, String categoryTitle, String categoryDescription, String categoryImageId, Date deleteMoment) {
+        this.categoryId = categoryId;
+        this.categorySlug = categorySlug;
+        this.categoryTitle = categoryTitle;
+        this.categoryDescription = categoryDescription;
+        this.categoryImageId = categoryImageId;
+        this.deleteMoment = deleteMoment;
+    }
     // ✅ Метод `fromResultSet()` для создания объекта из БД
     public static Category fromResultSet(ResultSet rs) throws SQLException {
         Category category = new Category();

@@ -1,14 +1,9 @@
-<%--
-    Created by IntelliJ IDEA.
-    User: Lector
-    Date: 22.01.2025
-    Time: 18:45
---%>
 <%@ page contentType="text/html;charset=UTF-8" %>
-<html>
+<!DOCTYPE html>
+<html lang="uk">
 <head>
-    <title>Головна сторінка</title>
     <meta charset="UTF-8">
+    <title>Головна сторінка</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -36,6 +31,7 @@
             text-decoration: none;
             font-size: 16px;
             transition: 0.3s;
+            cursor: pointer;
         }
         .btn:hover {
             background-color: #4a9ecf;
@@ -51,15 +47,7 @@
         h1, h2 {
             color: #61dafb;
         }
-        p, b, i {
-            font-size: 18px;
-        }
-        ul {
-            text-align: left;
-            display: inline-block;
-        }
-        /* Стилі для форми додавання товару */
-        .product-form {
+        .product-form, .product-list {
             background: #2c2c2c;
             padding: 20px;
             border-radius: 10px;
@@ -95,19 +83,22 @@
         .product-form button:hover {
             background-color: #4a9ecf;
         }
-        /* Список товарів */
-        .product-list {
-            margin-top: 30px;
-            background: #1e1e1e;
-            padding: 15px;
-            border-radius: 10px;
-        }
         .product-item {
             background: #2c2c2c;
             padding: 10px;
             border-radius: 5px;
             margin-top: 10px;
-            text-align: left;
+        }
+        .error-message {
+            color: #ff5252;
+            font-weight: bold;
+        }
+        .loading {
+            color: #61dafb;
+            font-style: italic;
+        }
+        .hidden {
+            display: none;
         }
     </style>
 </head>
@@ -125,98 +116,173 @@
 <div class="container">
     <h1>Ласкаво просимо!</h1>
 
-    <h2>Форма додавання товару</h2>
+    <!-- Кнопка, которая показывает/скрывает форму добавления товара -->
+    <button id="showAddFormBtn" class="btn">➕ Додати товар</button>
 
-    <form action="http://localhost:8081/Java_Web_211_war/product" method="post" enctype="multipart/form-data" class="product-form">
-        <label for="name">Назва товару:</label>
-        <input type="text" id="name" name="name" required>
+    <!-- Форма добавления товара (скрыта по умолчанию) -->
+    <div id="addProductFormContainer" class="product-form hidden">
+        <h2>Форма додавання товару</h2>
+        <!--
+             При добавлении (POST) экшен указывает на /products
+             Если вы хотите, чтобы форма также использовалась для редактирования (PUT),
+             можно динамически менять action и метод через JS
+        -->
+        <form id="addProductForm" action="http://localhost:8081/Java_Web_211_war/products"
+              method="post" enctype="multipart/form-data">
+            <label for="name">Назва товару:</label>
+            <input type="text" id="name" name="name" required>
 
-        <label for="price">Ціна:</label>
-        <input type="text" id="price" name="price" required>
+            <label for="price">Ціна:</label>
+            <input type="number" id="price" name="price" step="0.01" required>
 
-        <label for="description">Опис товару:</label>
-        <textarea id="description" name="description"></textarea>
+            <label for="description">Опис товару:</label>
+            <textarea id="description" name="description"></textarea>
 
-        <label for="code">Код товару:</label>
-        <input type="text" id="code" name="code" required>
+            <label for="code">Код товару:</label>
+            <input type="text" id="code" name="code" required>
 
-        <label for="stock">Кількість на складі:</label>
-        <input type="number" id="stock" name="stock" required>
+            <label for="stock">Кількість на складі:</label>
+            <input type="number" id="stock" name="stock" required>
 
-        <!-- Динамічне завантаження категорій -->
-        <label for="categoryId">Категорія:</label>
-        <select id="categoryId" name="categoryId" required>
-            <option value="">🔄 Завантаження категорій...</option>
-        </select>
+            <label for="categoryId">Категорія:</label>
+            <select id="categoryId" name="categoryId" required>
+                <option value="">🔄 Завантаження категорій...</option>
+            </select>
 
-        <label for="file1">Фото товару:</label>
-        <input type="file" id="file1" name="file1" accept="image/*">
+            <label for="file1">Фото товару:</label>
+            <input type="file" id="file1" name="file1" accept="image/*">
 
-        <button type="submit">📤 Додати товар</button>
-    </form>
-
-    <!-- Список товарів -->
-    <h2>Список товарів</h2>
-    <div id="productList" class="product-list">
-        <p>🔄 Завантаження товарів...</p>
+            <button type="submit">📤 Додати товар</button>
+        </form>
     </div>
+
+    <h2>Список товарів</h2>
+    <div id="productList" class="product-list loading">🔄 Завантаження товарів...</div>
 </div>
 
 <script>
-    document.addEventListener("DOMContentLoaded", function () {
-        const categorySelect = document.getElementById("categoryId");
-        const productList = document.getElementById("productList");
+    document.addEventListener("DOMContentLoaded", () => {
+        // Кнопка "Добавить товар" - показываем/скрываем форму
+        const showAddFormBtn = document.getElementById("showAddFormBtn");
+        const addProductFormContainer = document.getElementById("addProductFormContainer");
 
-        console.log("🔧 Ініціалізація завантаження категорій...");
+        showAddFormBtn.addEventListener("click", () => {
+            // Переключаем класс .hidden, чтобы показать/скрыть форму
+            addProductFormContainer.classList.toggle("hidden");
+        });
+
+        // Загружаем категории и товары при старте
+        loadCategories();
+        loadProducts();
+    });
+
+    function loadCategories() {
+        const categorySelect = document.getElementById("categoryId");
+        categorySelect.innerHTML = '<option value="">🔄 Завантаження категорій...</option>';
+
+        fetch("http://localhost:8081/Java_Web_211_war/categories")
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+                return response.json();
+            })
+            .then(categories => {
+                if (!categories.length) {
+                    categorySelect.innerHTML = '<option value="">❌ Категорій не знайдено</option>';
+                    return;
+                }
+                categorySelect.innerHTML = '<option value="">-- Оберіть категорію --</option>';
+                categories.forEach(category => {
+                    const option = document.createElement('option');
+                    option.value = category.categoryId;
+                    option.textContent = category.categoryTitle;
+                    categorySelect.appendChild(option);
+                });
+            })
+            .catch(error => {
+                console.error("❌ Помилка при завантаженні категорій:", error);
+                categorySelect.innerHTML = '<option value="">❌ Помилка завантаження</option>';
+            });
+    }
+
+    function loadProducts() {
+        const productList = document.getElementById("productList");
+        productList.innerHTML = '🔄 Завантаження товарів...';
+        productList.classList.add("loading");
+
         fetch("http://localhost:8081/Java_Web_211_war/products")
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+                return response.json();
+            })
             .then(products => {
-                console.log("✅ Товари успішно завантажені:", products);
+                productList.classList.remove("loading");
                 productList.innerHTML = "";
 
                 if (!products.length) {
-                    productList.innerHTML = "<p>⚠️ Товари не знайдено</p>";
+                    productList.innerHTML = "<p>⚠️ Товарів не знайдено</p>";
                     return;
                 }
 
                 products.forEach(product => {
-                    const {
-                        name,
-                        price,
-                        description,
-                        code,
-                        stock,
-                        categoryId,
-                        imageId
-                    } = product;
+                    const item = document.createElement("div");
+                    item.classList.add("product-item");
 
-                    const productItem = document.createElement("div");
-                    productItem.classList.add("product-item");
-
-                    const imageTag = imageId
-                        ? `<img src="/Java_Web_211_war/images/${imageId}" alt="${name}" style="max-width: 100px;">`
+                    const imageTag = product.imageId
+                        ? `<img src="/Java_Web_211_war/storage/${product.imageId}" alt="${product.name}" style="max-width: 100px;">`
                         : '❌ Без зображення';
 
-                    productItem.innerHTML = `
-                <p>
-                    <strong>📦 ${name}</strong><br>
-                    💰 Ціна: ${price} грн<br>
-                    📄 Опис: ${description}<br>
-                    🆔 Код: ${code}<br>
-                    📦 Запас: ${stock}<br>
-                    📂 Категорія ID: ${categoryId}<br>
-                    ${imageTag}
-                </p>
-            `;
+                    // Кнопки "Редактировать" и "Удалить" (заглушки)
+                    // В реальном коде при "Редактировать" можно заполнить форму и отправить PUT
+                    // При "Удалить" - отправить DELETE-запрос
+                    const editBtn = `<button class="btn" onclick="editProduct('${product.productId}')">✏️ Редагувати</button>`;
+                    const deleteBtn = `<button class="btn" onclick="deleteProduct('${product.productId}')">🗑️ Видалити</button>`;
 
-                    productList.appendChild(productItem);
+
+                    productList.appendChild(item);
                 });
             })
             .catch(error => {
                 console.error("❌ Помилка при завантаженні товарів:", error);
-                productList.innerHTML = "<p>❌ Помилка завантаження товарів</p>";
+                productList.classList.remove("loading");
+                productList.innerHTML = '<p class="error-message">❌ Помилка завантаження товарів</p>';
             });
-    });
+    }
+
+    // Заглушка для редактирования
+    function editProduct(productId) {
+        alert("Здесь можно реализовать логику редактирования товара c ID = " + productId);
+        // Например:
+        // 1) Получить данные товара (если не в массиве) или найти его в загруженных products
+        // 2) Заполнить форму, переключиться на PUT-запрос
+        // 3) При сабмите формы отправлять PUT ...
+    }
+
+    // Заглушка для удаления
+    function deleteProduct(productId) {
+        if (!confirm("Ви впевнені, що хочете видалити цей товар?")) return;
+
+        // Пример DELETE-запроса
+        fetch(`http://localhost:8081/Java_Web_211_war/products?productId=${productId}`, {
+            method: "DELETE",
+            headers: {
+                // Если нужно: 'Authorization': 'Bearer ...'
+            }
+        })
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+                return response.json();
+            })
+            .then(data => {
+                console.log("Відповідь при видаленні:", data);
+                alert(data.message || "Товар видалено");
+                // Перезагружаем список товаров
+                loadProducts();
+            })
+            .catch(error => {
+                console.error("❌ Помилка при видаленні товару:", error);
+                alert("Сталася помилка при видаленні товару");
+            });
+    }
 </script>
 
 </body>
