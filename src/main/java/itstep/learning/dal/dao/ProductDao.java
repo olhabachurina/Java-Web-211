@@ -137,8 +137,28 @@ public class ProductDao {
 
         logger.info("📥 Додавання продукту: " + product.getName());
 
+        // Перевірки
+        if (product.getCategoryId() == null) {
+            logger.warning("⚠️ [addProduct] categoryId is NULL! Запит не виконується.");
+            return false;
+        }
+        if (product.getProductId() == null) {
+            logger.warning("⚠️ [addProduct] productId is NULL! Запит не виконується.");
+            return false;
+        }
+
         try (Connection connection = dbService.getConnection();
              PreparedStatement stmt = connection.prepareStatement(sql)) {
+
+            // Логування параметрів
+            logger.info("➡️ productId: " + product.getProductId());
+            logger.info("➡️ name: " + product.getName());
+            logger.info("➡️ description: " + product.getDescription());
+            logger.info("➡️ price: " + product.getPrice());
+            logger.info("➡️ code: " + product.getCode());
+            logger.info("➡️ stock: " + product.getStock());
+            logger.info("➡️ categoryId: " + product.getCategoryId());
+            logger.info("➡️ imageId: " + product.getImageId());
 
             stmt.setString(1, product.getProductId().toString());
             stmt.setString(2, product.getName());
@@ -147,13 +167,16 @@ public class ProductDao {
             stmt.setString(5, product.getCode());
             stmt.setInt(6, product.getStock());
             stmt.setString(7, product.getCategoryId().toString());
-            stmt.setString(8, product.getImageId());
+            stmt.setString(8, product.getImageId() != null ? product.getImageId() : "");
 
             int rowsAffected = stmt.executeUpdate();
+            logger.info("✅ Записано рядків: " + rowsAffected);
 
             return rowsAffected > 0;
 
         } catch (SQLException e) {
+            logger.log(Level.SEVERE, "❌ SQL: " + sql);
+            logger.log(Level.SEVERE, "❌ Параметри: " + product.toString());
             logger.log(Level.SEVERE, "❌ Помилка при додаванні продукту: " + e.getMessage(), e);
             return false;
         }

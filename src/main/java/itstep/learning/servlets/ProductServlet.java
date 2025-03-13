@@ -11,6 +11,7 @@ import itstep.learning.services.form_parse.FormParseResult;
 import itstep.learning.services.form_parse.FormParseService;
 import itstep.learning.services.storage.StorageService;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.annotation.MultipartConfig;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -35,6 +36,7 @@ import java.util.logging.Logger;
 
 @Singleton
 /*@WebServlet("/products")*/
+@MultipartConfig
 public class ProductServlet extends HttpServlet {
     private static final Logger LOGGER = Logger.getLogger(ProductServlet.class.getName());
 
@@ -311,36 +313,62 @@ public class ProductServlet extends HttpServlet {
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         LOGGER.info("📥 [doPost] Початок обробки POST-запиту (створення продукту).");
         setCorsHeaders(resp);
+
+        // Перевірка авторизації
         if (!isAuthorized(req)) {
             sendUnauthorized(resp);
             LOGGER.info("🚫 [doPost] Запит відхилено через відсутність авторизації.");
             return;
         }
-        String savedFileId = null;
-        try {
-            FormParseResult formParseResult = formParseService.parseRequest(req);
-            LOGGER.info("📝 [doPost] Поля форми: " + formParseResult.getFields().keySet());
 
-            // Перевірка обов'язкового поля categoryId
+        String savedFileId = null;
+
+        try {
+            // Парсимо форму
+            FormParseResult formParseResult = formParseService.parseRequest(req);
+            LOGGER.info("📝 [doPost] Поля форми: " + formParseResult.getFields());
+            LOGGER.info("📝 [doPost] Файли форми: " + formParseResult.getFiles().keySet());
+
+            // Перевірка categoryId
             String catIdStr = formParseResult.getFields().get("categoryId");
+            LOGGER.info("🔎 [doPost] Отримано categoryId: " + catIdStr);
+
             if (catIdStr == null || catIdStr.isEmpty()) {
                 LOGGER.warning("⚠️ [doPost] Не вибрано категорію.");
                 sendJsonError(resp, "❌ Не вибрано категорію");
                 return;
             }
 
+            // Обробка зображення
             FileItem file1 = formParseResult.getFiles().get("file1");
             if (file1 != null && file1.getSize() > 0) {
                 String fileExt = getFileExtension(file1.getName());
                 LOGGER.info("📁 [doPost] Визначено розширення файлу: " + fileExt);
+
                 savedFileId = storageService.put(file1.getInputStream(), fileExt);
+                if (savedFileId == null || savedFileId.isEmpty()) {
+                    LOGGER.warning("❌ [doPost] Не вдалося зберегти файл.");
+                    sendJsonError(resp, "❌ Не вдалося зберегти файл");
+                    return;
+                }
+
                 LOGGER.info("✅ [doPost] Файл збережено під ім'ям: " + savedFileId);
             } else {
-                LOGGER.warning("❌ [doPost] Картинку не отримали! Я таке не продаю без картинки!");
+                LOGGER.warning("❌ [doPost] Картинку не отримали або вона порожня!");
+                sendJsonError(resp, "❌ Картинку не отримали або вона порожня!");
+                return;
             }
 
+            // Перевірка наявності коду продукту
             String code = formParseResult.getFields().get("code");
             LOGGER.info("🔍 [doPost] Перевірка наявності продукту з кодом: " + code);
+
+            if (code == null || code.isEmpty()) {
+                LOGGER.warning("⚠️ [doPost] Не вказано код продукту.");
+                sendJsonError(resp, "❌ Код продукту є обов'язковим");
+                return;
+            }
+
             if (productDao.existsByCode(code)) {
                 LOGGER.warning("⚠️ [doPost] Товар із кодом " + code + " вже існує.");
                 deleteFileIfExists(savedFileId);
@@ -348,21 +376,25 @@ public class ProductServlet extends HttpServlet {
                 return;
             }
 
+            // Створення продукту
             Product product = buildProductFromForm(formParseResult, savedFileId);
             LOGGER.info("🛠️ [doPost] Створення продукту: " + product);
+
             if (productDao.addProduct(product)) {
                 LOGGER.info("✅ [doPost] Товар додано успішно!");
                 sendJsonSuccess(resp, "✅ Товар додано успішно!");
             } else {
-                LOGGER.warning("❌ [doPost] Не вдалося додати товар.");
+                LOGGER.warning("❌ [doPost] Не вдалося додати товар у базу даних.");
                 deleteFileIfExists(savedFileId);
                 sendJsonError(resp, "❌ Не вдалося додати товар");
             }
+
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "❌ [doPost] Аварія при додаванні продукту", e);
             deleteFileIfExists(savedFileId);
             logErrorAndRespond(resp, "❌ Аварія при додаванні продукту", e);
         }
+
         LOGGER.info("✅ [doPost] Завершення обробки POST-запиту.");
     }
 
@@ -372,62 +404,111 @@ public class ProductServlet extends HttpServlet {
     @Override
     protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         LOGGER.info("📥 [doPut] Початок обробки PUT-запиту (оновлення продукту).");
+
+        // КОРС
         setCorsHeaders(resp);
+
+        // Перевірка авторизації
         if (!isAuthorized(req)) {
             sendUnauthorized(resp);
-            LOGGER.info("🚫 [doPut] Запит відхилено через відсутність авторизації.");
+            LOGGER.warning("🚫 [doPut] Запит відхилено. Користувач не авторизований!");
             return;
         }
+
         String updatedFileId = null;
+
         try {
+            // Парсинг форми
             FormParseResult formParseResult = formParseService.parseRequest(req);
-            UUID productId = UUID.fromString(formParseResult.getFields().get("productId"));
+            LOGGER.info("📝 [doPut] Отримано поля форми: " + formParseResult.getFields().keySet());
+
+            // Перевірка productId
+            String productIdStr = formParseResult.getFields().get("productId");
+            if (productIdStr == null || productIdStr.isEmpty()) {
+                LOGGER.warning("⚠️ [doPut] Параметр productId відсутній або порожній.");
+                sendJsonError(resp, "❌ Потрібно вказати ID продукту");
+                return;
+            }
+
+            UUID productId = UUID.fromString(productIdStr);
             LOGGER.info("🔍 [doPut] Оновлення продукту з ID: " + productId);
 
+            // Перевірка існування продукту
             Product existingProduct = productDao.getProductById(productId);
             if (existingProduct == null) {
-                LOGGER.warning("❌ [doPut] Продукт не знайдено з ID: " + productId);
+                LOGGER.warning("❌ [doPut] Продукт з ID " + productId + " не знайдено.");
                 sendJsonError(resp, "❌ Продукт не знайдено");
                 return;
             }
-            String oldFileId = existingProduct.getImageId();
 
+            // Отримуємо старий imageId
+            String oldFileId = existingProduct.getImageId();
+            LOGGER.info("ℹ️ [doPut] Старий файл зображення: " + oldFileId);
+
+            // Обробка нового файлу, якщо є
             FileItem file1 = formParseResult.getFiles().get("file1");
             if (file1 != null && file1.getSize() > 0) {
                 String fileExt = getFileExtension(file1.getName());
                 LOGGER.info("📁 [doPut] Визначено нове розширення файлу: " + fileExt);
+
                 updatedFileId = storageService.put(file1.getInputStream(), fileExt);
                 existingProduct.setImageId(updatedFileId);
-                LOGGER.info("✅ [doPut] Нова картинка збережена: " + updatedFileId);
+
+                LOGGER.info("✅ [doPut] Нова картинка збережена з ID: " + updatedFileId);
+            } else {
+                LOGGER.info("ℹ️ [doPut] Картинка не завантажена. Використовується попередня.");
             }
 
-            String code = formParseResult.getFields().get("code");
-            LOGGER.info("🔍 [doPut] Перевірка нового коду продукту: " + code);
-            if (!existingProduct.getCode().equals(code) && productDao.existsByCode(code)) {
-                LOGGER.warning("⚠️ [doPut] Продукт із кодом " + code + " вже існує при оновленні.");
+            // Перевірка нового коду продукту
+            String newCode = formParseResult.getFields().get("code");
+            if (newCode == null || newCode.isEmpty()) {
+                LOGGER.warning("⚠️ [doPut] Код продукту не вказаний.");
+                sendJsonError(resp, "❌ Потрібно вказати код продукту");
+                return;
+            }
+
+            LOGGER.info("🔍 [doPut] Перевірка нового коду продукту: " + newCode);
+
+            // Перевірка унікальності коду (крім самого себе)
+            if (!existingProduct.getCode().equals(newCode) && productDao.existsByCode(newCode)) {
+                LOGGER.warning("⚠️ [doPut] Продукт із кодом " + newCode + " вже існує.");
                 deleteFileIfExists(updatedFileId);
                 sendJsonError(resp, "❌ Продукт із таким кодом вже існує");
                 return;
             }
 
+            // Оновлюємо продукт полями з форми
             updateProductFromForm(existingProduct, formParseResult);
-            LOGGER.info("🛠️ [doPut] Оновлені дані продукту: " + existingProduct);
-            if (productDao.updateProduct(existingProduct)) {
-                LOGGER.info("✅ [doPut] Продукт успішно оновлено.");
+            LOGGER.info("🛠️ [doPut] Оновлені дані продукту:\n" + existingProduct);
+
+            // Оновлюємо в БД
+            boolean isUpdated = productDao.updateProduct(existingProduct);
+            if (isUpdated) {
+                LOGGER.info("✅ [doPut] Продукт успішно оновлено: " + existingProduct.getProductId());
+
+                // Видаляємо старий файл, якщо є новий
                 deleteOldFileIfNeeded(updatedFileId, oldFileId);
+
                 sendJsonSuccess(resp, "✅ Продукт оновлено");
             } else {
-                LOGGER.warning("❌ [doPut] Не вдалося оновити продукт.");
+                LOGGER.warning("❌ [doPut] Не вдалося оновити продукт у БД.");
                 deleteFileIfExists(updatedFileId);
                 sendJsonError(resp, "❌ Не вдалося оновити продукт");
             }
+
+        } catch (IllegalArgumentException e) {
+            LOGGER.log(Level.WARNING, "⚠️ [doPut] Некоректний UUID або інші вхідні дані: " + e.getMessage(), e);
+            sendJsonError(resp, "❌ Некоректні вхідні дані");
+
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "❌ [doPut] Помилка при оновленні продукту", e);
             deleteFileIfExists(updatedFileId);
             logErrorAndRespond(resp, "❌ Помилка при оновленні продукту", e);
         }
+
         LOGGER.info("✅ [doPut] Завершення обробки PUT-запиту.");
     }
+
 
     // ========================
     // ===== DELETE PRODUCT ===
