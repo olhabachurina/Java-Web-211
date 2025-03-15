@@ -14,12 +14,13 @@ public class Product {
     private UUID categoryId;
     private String imageId;
 
-
+    // ✅ Новые поля для передачи на фронт
+    private String categoryTitle;
+    private String categorySlug;
 
     public Product() {
         this.productId = UUID.randomUUID();
     }
-
 
     public Product(String name, String description, double price, String code, int stock, UUID categoryId, String imageId) {
         this.productId = UUID.randomUUID();
@@ -111,7 +112,24 @@ public class Product {
         this.imageId = imageId;
     }
 
-    // ✅ Метод `toString()` для логирования и отладки
+    // ✅ Новые геттеры и сеттеры для categoryTitle и categorySlug
+    public String getCategoryTitle() {
+        return categoryTitle;
+    }
+
+    public void setCategoryTitle(String categoryTitle) {
+        this.categoryTitle = categoryTitle;
+    }
+
+    public String getCategorySlug() {
+        return categorySlug;
+    }
+
+    public void setCategorySlug(String categorySlug) {
+        this.categorySlug = categorySlug;
+    }
+
+    // ✅ toString() для удобства дебага
     @Override
     public String toString() {
         return "Product{" +
@@ -123,6 +141,8 @@ public class Product {
                 ", stock=" + stock +
                 ", categoryId=" + categoryId +
                 ", imageId='" + imageId + '\'' +
+                ", categoryTitle='" + categoryTitle + '\'' +
+                ", categorySlug='" + categorySlug + '\'' +
                 '}';
     }
 }

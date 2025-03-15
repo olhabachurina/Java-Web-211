@@ -198,6 +198,19 @@ public class ProductServlet extends HttpServlet {
                         LOGGER.info("🖼️ URL зображення продукту: " + productImageUrl);
                         product.setImageId(productImageUrl);
 
+                        // ✅ Получаем данные категории продукта и заполняем categoryTitle и categorySlug
+                        Category productCategory = categoryDao.getCategoryById(product.getCategoryId());
+
+                        if (productCategory != null) {
+                            product.setCategoryTitle(productCategory.getCategoryTitle());
+                            product.setCategorySlug(productCategory.getCategorySlug());
+                            LOGGER.info("✅ Продукт пов'язано з категорією: " + productCategory.getCategoryTitle());
+                        } else {
+                            LOGGER.warning("⚠️ Категорія для продукту не знайдена");
+                            product.setCategoryTitle("Категорія не знайдена");
+                            product.setCategorySlug("unknown");
+                        }
+
                         sendJson(resp, product, "📤 Продукт надісланий успішно");
 
                     } catch (IllegalArgumentException e) {
@@ -227,7 +240,6 @@ public class ProductServlet extends HttpServlet {
 
         LOGGER.info("✅ [doGet] Завершення обробки GET-запиту");
     }
-
 
     private void handlePagedProducts(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         int limit = Integer.parseInt(req.getParameter("limit"));
