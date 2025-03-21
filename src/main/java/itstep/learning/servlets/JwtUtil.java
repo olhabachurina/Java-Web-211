@@ -61,7 +61,9 @@ public class JwtUtil {
         Claims claims = getClaims(token);
         return claims != null ? claims.get("role", String.class) : null;
     }
-
+    public static Claims getPayload(String token) {
+        return getClaims(token);
+    }
     private static Claims getClaims(String token) {
         try {
             return Jwts.parserBuilder()

@@ -1,14 +1,15 @@
 package itstep.learning.servlets;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonSyntaxException;
+import com.google.gson.*;
 import com.google.inject.Inject;
 import itstep.learning.dal.dao.AccessTokenDao;
+import itstep.learning.dal.dao.CartDao;
+import itstep.learning.dal.dao.DataContext;
 import itstep.learning.dal.dao.UserDao;
+import itstep.learning.dal.dto.Cart;
 import itstep.learning.models.User;
 import itstep.learning.services.JwtService;
+import itstep.learning.services.LocalDateTimeAdapter;
 import jakarta.inject.Singleton;
 import jakarta.servlet.ServletConfig;
 import jakarta.servlet.ServletContext;
@@ -19,54 +20,111 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.sql.*;
 import java.time.LocalDateTime;
-import java.util.Enumeration;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.sql.SQLException;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
-import static com.mysql.cj.conf.PropertyKey.logger;
-
-
-
-import static com.mysql.cj.conf.PropertyKey.logger;
 @Singleton
 @WebServlet("/users/*")
 public class UserServlet extends HttpServlet {
 
     private static final Logger LOGGER = Logger.getLogger(UserServlet.class.getName());
+
     private UserDao userDao;
     private Connection connection;
-    private String role;
+
     @Inject
     private JwtService jwtService;
+
+    @Inject
+    private CartDao cartDao;
+
+    private final Gson gson = new GsonBuilder()
+            .registerTypeAdapter(LocalDateTime.class, (JsonSerializer<LocalDateTime>) (src, typeOfSrc, context) ->
+                    new JsonPrimitive(src.toString()))
+            .registerTypeAdapter(UUID.class, (JsonSerializer<UUID>) (src, typeOfSrc, context) ->
+                    new JsonPrimitive(src.toString()))
+            .setPrettyPrinting()
+            .create();
 
     @Override
     public void init(ServletConfig config) throws ServletException {
         super.init(config);
         ServletContext context = config.getServletContext();
+
         this.connection = (Connection) context.getAttribute("dbConnection");
         Logger appLogger = (Logger) context.getAttribute("appLogger");
+
         userDao = new UserDao(connection, appLogger);
-        LOGGER.info("UserServlet инициализирован.");
+        LOGGER.info("✅ [UserServlet] Ініціалізація завершена успішно");
+    }
+
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        setupResponseHeaders(resp);
+        LOGGER.info("➡️ [doGet] Запит на отримання профілю користувача");
+
+        String token = extractBearerToken(req);
+        if (token == null) {
+            LOGGER.warning("⛔ [doGet] Відсутній токен у запиті (Authorization header)");
+            sendJsonResponse(resp, 401, Map.of("error", "Access token is missing or invalid"));
+            return;
+        }
+
+        JsonElement payload = jwtService.fromJwt(token);
+        if (payload == null) {
+            LOGGER.warning("⛔ [doGet] Токен недійсний або прострочений: " + token);
+            sendJsonResponse(resp, 403, Map.of("error", "Invalid or expired token"));
+            return;
+        }
+
+        long userId = payload.getAsJsonObject().get("user_id").getAsLong();
+        LOGGER.info("✅ [doGet] Авторизований користувач ID: " + userId);
+
+        try {
+            User user = userDao.getUserById(userId);
+            if (user == null) {
+                LOGGER.warning("❗ [doGet] Користувача не знайдено в БД ID: " + userId);
+                sendJsonResponse(resp, 404, Map.of("error", "User not found"));
+                return;
+            }
+
+            Optional<Cart> cartOpt = cartDao.getCartByUserAccessId(String.valueOf(userId));
+            Cart cart = cartOpt.orElseGet(() -> createCartForUser(user));
+
+            sendJsonResponse(resp, 200, Map.of(
+                    "user", user,
+                    "cart", cart
+            ));
+
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "❌ [doGet] Помилка БД при отриманні користувача або корзини", e);
+            sendJsonResponse(resp, 500, Map.of("error", "Database error"));
+        }
     }
 
     @Override
     protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         setupResponseHeaders(resp);
-        LOGGER.info("Получен PUT-запрос: " + req.getRequestURI());
+        LOGGER.info("✏️ [doPut] Запит на оновлення профілю користувача");
 
         String token = extractBearerToken(req);
         if (token == null) {
             sendJsonResponse(resp, 401, Map.of("error", "Access token is missing or invalid"));
             return;
         }
+
         JsonElement payload = jwtService.fromJwt(token);
         if (payload == null) {
             sendJsonResponse(resp, 403, Map.of("error", "Invalid or expired token"));
@@ -74,25 +132,20 @@ public class UserServlet extends HttpServlet {
         }
 
         long userId = payload.getAsJsonObject().get("user_id").getAsLong();
-        LOGGER.info("Авторизован пользователь с ID: " + userId);
 
         String body = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        Gson gson = new Gson();
-        User updatedUser;
-        try {
-            updatedUser = gson.fromJson(body, User.class);
-        } catch (Exception e) {
-            sendJsonResponse(resp, 422, Map.of("error", "Incorrect JSON format"));
-            return;
-        }
+        LOGGER.info("📥 [doPut] Отримано JSON body: " + body);
 
         try {
+            User updatedUser = gson.fromJson(body, User.class);
             User existingUser = userDao.getUserById(userId);
+
             if (existingUser == null) {
                 sendJsonResponse(resp, 404, Map.of("error", "User not found"));
                 return;
             }
 
+            // Обновляем только разрешенные поля
             if (updatedUser.getName() != null) existingUser.setName(updatedUser.getName());
             if (updatedUser.getCity() != null) existingUser.setCity(updatedUser.getCity());
             if (updatedUser.getAddress() != null) existingUser.setAddress(updatedUser.getAddress());
@@ -100,37 +153,13 @@ public class UserServlet extends HttpServlet {
 
             userDao.updateUser(existingUser);
 
-            sendJsonResponse(resp, 200, Map.of("message", "User updated successfully", "user", existingUser));
+            sendJsonResponse(resp, 200, Map.of(
+                    "message", "User updated successfully",
+                    "user", existingUser
+            ));
 
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Ошибка при обновлении пользователя с ID=" + userId, e);
-            sendJsonResponse(resp, 500, Map.of("error", "Database error"));
-        }
-    }
-
-    @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        setupResponseHeaders(resp);
-        String token = extractBearerToken(req);
-        if (token == null) {
-            sendJsonResponse(resp, 401, Map.of("error", "Access token is missing or invalid"));
-            return;
-        }
-        JsonElement payload = jwtService.fromJwt(token);
-        if (payload == null) {
-            sendJsonResponse(resp, 403, Map.of("error", "Invalid or expired token"));
-            return;
-        }
-        long userId = payload.getAsJsonObject().get("user_id").getAsLong();
-        LOGGER.info("Авторизован пользователь с ID: " + userId);
-        try {
-            User user = userDao.getUserById(userId);
-            if (user == null) {
-                sendJsonResponse(resp, 404, Map.of("error", "User not found"));
-                return;
-            }
-            sendJsonResponse(resp, 200, user);
-        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "❌ [doPut] DB error on update user", e);
             sendJsonResponse(resp, 500, Map.of("error", "Database error"));
         }
     }
@@ -138,29 +167,68 @@ public class UserServlet extends HttpServlet {
     @Override
     protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         setupResponseHeaders(resp);
+
         String token = extractBearerToken(req);
         if (token == null) {
             sendJsonResponse(resp, 401, Map.of("error", "Access token is missing or invalid"));
             return;
         }
+
         JsonElement payload = jwtService.fromJwt(token);
         if (payload == null) {
             sendJsonResponse(resp, 403, Map.of("error", "Invalid or expired token"));
             return;
         }
+
         long userId = payload.getAsJsonObject().get("user_id").getAsLong();
-        LOGGER.info("Авторизован пользователь с ID: " + userId);
+
         try {
             User user = userDao.getUserById(userId);
             if (user == null) {
                 sendJsonResponse(resp, 404, Map.of("error", "User not found"));
                 return;
             }
+
             userDao.softDeleteUser(userId);
             sendJsonResponse(resp, 200, Map.of("message", "User deleted successfully"));
+
         } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "❌ [doDelete] DB error deleting user", e);
             sendJsonResponse(resp, 500, Map.of("error", "Database error"));
         }
+    }
+
+    private Cart createCartForUser(User user) {
+        String salt = generateSalt();
+        String derivedKey = generateDerivedKey(user.getLogin(), salt);
+
+        Cart cart = new Cart(
+                UUID.randomUUID().toString(),
+                String.valueOf(user.getId()),
+                user.getRole(),
+                user.getLogin(),
+                salt,
+                derivedKey,
+                LocalDateTime.now(),
+                null,
+                false,
+                0.0
+        );
+
+        try {
+            boolean created = cartDao.createCart(cart);
+            if (!created) {
+                LOGGER.severe("❌ Не вдалося створити корзину");
+                throw new RuntimeException("Не вдалося створити корзину");
+            }
+
+            LOGGER.info("✅ Створено нову корзину з cartId: " + cart.getCartId());
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "❌ Ошибка создания корзины", e);
+            throw new RuntimeException("Ошибка создания корзины", e);
+        }
+
+        return cart;
     }
 
     private String extractBearerToken(HttpServletRequest req) {
@@ -170,30 +238,82 @@ public class UserServlet extends HttpServlet {
         }
         return null;
     }
-
-    private void setupResponseHeaders(HttpServletResponse resp) {
-        resp.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
-        resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE");
-        resp.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-        resp.setHeader("Access-Control-Allow-Credentials", "true");
-        resp.setHeader("Access-Control-Max-Age", "3600");
-    }
-
     @Override
     protected void doOptions(HttpServletRequest req, HttpServletResponse resp) {
         setupResponseHeaders(resp);
         resp.setStatus(HttpServletResponse.SC_OK);
     }
+    private void setupResponseHeaders(HttpServletResponse resp) {
+        resp.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");  // ✅
+        resp.setHeader("Access-Control-Allow-Credentials", "true");
+        resp.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        resp.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        resp.setHeader("Access-Control-Max-Age", "3600");
+    }
 
     private void sendJsonResponse(HttpServletResponse resp, int statusCode, Object data) throws IOException {
-        Gson gson = new Gson();
+        String json = gson.toJson(data);
+
         resp.setStatus(statusCode);
         resp.setContentType("application/json; charset=UTF-8");
-        resp.getWriter().write(gson.toJson(data));
-        LOGGER.info("Отправлен HTTP " + statusCode + ": " + gson.toJson(data));
+
+        try (PrintWriter writer = resp.getWriter()) {
+            writer.write(json);
+        }
+
+        LOGGER.info("📤 Відповідь HTTP " + statusCode + ": " + json);
+    }
+
+    private String generateSalt() {
+        SecureRandom random = new SecureRandom();
+        StringBuilder sb = new StringBuilder(16);
+        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+        for (int i = 0; i < 16; i++) {
+            sb.append(chars.charAt(random.nextInt(chars.length())));
+        }
+
+        return sb.toString();
+    }
+
+    private String generateDerivedKey(String login, String salt) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = md.digest((login + salt).getBytes(StandardCharsets.UTF_8));
+            String derivedKey = Base64.getEncoder().encodeToString(hashBytes);
+
+            return derivedKey.length() > 20 ? derivedKey.substring(0, 20) : derivedKey;
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("Ошибка генерации derivedKey", e);
+        }
     }
 }
 
+/*@Singleton
+@WebServlet("/users/*")
+public class UserServlet extends HttpServlet {
+    private static final Logger LOGGER = Logger.getLogger(UserServlet.class.getName());
+
+    private UserDao userDao;
+    private Connection connection;
+
+    // Guice-внедрение DAO для работы с токенами
+    @Inject
+    private AccessTokenDao accessTokenDao;
+
+    @Override
+    public void init(ServletConfig config) throws ServletException {
+        super.init(config);
+        ServletContext context = config.getServletContext();
+
+        // Достаём готовое подключение к БД и логгер
+        this.connection = (Connection) context.getAttribute("dbConnection");
+        Logger appLogger = (Logger) context.getAttribute("appLogger");
+
+        // Инициализируем UserDao
+        userDao = new UserDao(connection, appLogger);
+        LOGGER.info("UserServlet инициализирован.");
+    }
 /*@Singleton
 @WebServlet("/users/*")
 public class UserServlet extends HttpServlet {

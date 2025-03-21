@@ -17,12 +17,13 @@ public class DataContext {
     private final Logger logger;
     private final UserDao userDao;
     private AccessTokenDao accessTokenDao;
-
+    private final CartDao cartDao;
     @Inject
     public DataContext(DbService dbService, Logger logger) {
         this.connection = dbService.getConnection(); // Отримання з'єднання з DbService
         this.logger = logger; // Логгер для відстеження подій
-        this.userDao = new UserDao(connection, logger); // Передаємо логгер до UserDao
+        this.userDao = new UserDao(connection, logger);
+        this.cartDao = new CartDao(dbService, logger);// Передаємо логгер до UserDao
         logger.info("DataContext успішно ініціалізований.");
     }
 
@@ -38,6 +39,7 @@ public class DataContext {
             boolean usersInstalled = userDao.installUsers(); // Встановлення таблиці `users`
             boolean accessInstalled = userDao.installUserAccess(); // Встановлення таблиці `users_access`
             boolean rolesInstalled = userDao.installUserRoles(); // Встановлення таблиці `user_roles`
+            boolean cartsInstalled   = cartDao.installTables();
 
             if (usersInstalled && accessInstalled && rolesInstalled) {
                 logger.info("Усі таблиці успішно створено.");
@@ -50,6 +52,9 @@ public class DataContext {
             logger.severe("Помилка під час встановлення таблиць: " + e.getMessage());
             return false;
         }
+    }
+    public CartDao getCartDao() {
+        return cartDao;
     }
     public void initializeRolesAndAccess() {
         logger.info("Инициализация ролей и данных доступа...");

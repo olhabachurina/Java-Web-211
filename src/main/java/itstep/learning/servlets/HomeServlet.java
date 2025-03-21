@@ -4,10 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import itstep.learning.dal.dao.CategoryDao;
-import itstep.learning.dal.dao.DataContext;
-import itstep.learning.dal.dao.ProductDao;
-import itstep.learning.dal.dao.UserDao;
+import itstep.learning.dal.dao.*;
 import itstep.learning.dal.dto.Category;
 import itstep.learning.dal.dto.Product;
 import itstep.learning.services.DbService.DbService;
@@ -53,7 +50,8 @@ public class HomeServlet extends HttpServlet {
     private final ConfigService configService;
     private final CategoryDao categoryDao;
     private final ProductDao productDao;
-
+    private final CartDao cartDao;
+    private final OrdersDao ordersDao;
     @Inject
     public HomeServlet(RandomService randomService,
                        DateTimeService dateTimeService,
@@ -61,7 +59,8 @@ public class HomeServlet extends HttpServlet {
                        DataContext dataContext,
                        ConfigService configService,
                        CategoryDao categoryDao,
-                       ProductDao productDao) {
+                       ProductDao productDao,
+                       CartDao cartDao, OrdersDao ordersDao) {
         this.randomService = randomService;
         this.dateTimeService = dateTimeService;
         this.kdfService = kdfService;
@@ -69,6 +68,8 @@ public class HomeServlet extends HttpServlet {
         this.configService = configService;
         this.categoryDao = categoryDao;
         this.productDao = productDao;
+        this.cartDao = cartDao;
+        this.ordersDao = ordersDao;
     }
 
     @Override
@@ -80,13 +81,16 @@ public class HomeServlet extends HttpServlet {
         int statusCode = 200;
 
         try {
-            if (randomService == null || dateTimeService == null || kdfService == null
-                    || dataContext == null || configService == null || categoryDao == null || productDao == null) {
+            // Проверка, что все зависимости загружены
+            if (randomService == null || dateTimeService == null || kdfService == null ||
+                    dataContext == null || configService == null || categoryDao == null ||
+                    productDao == null || cartDao == null) {
                 throw new IllegalStateException("❌ Не вдалося завантажити всі залежності.");
             }
 
             LOGGER.info("✅ Усі залежності завантажені успішно");
 
+            // Создание таблиц
             boolean tablesCreated = dataContext.installTables();
             LOGGER.info("✅ Створення основних таблиць: " + tablesCreated);
 
@@ -96,6 +100,14 @@ public class HomeServlet extends HttpServlet {
             boolean productsTableCreated = productDao.installTables();
             LOGGER.info("✅ Створення таблиці продуктів: " + productsTableCreated);
 
+            boolean cartTableCreated = cartDao.installTables();
+            LOGGER.info("✅ Створення таблиці 'carts': " + cartTableCreated);
+
+            boolean ordersTablesCreated = ordersDao.installTables();
+            LOGGER.info(ordersTablesCreated
+                    ? "✅ Таблицы 'orders' и 'order_items' созданы или уже существуют"
+                    : "❌ Ошибка создания таблиц 'orders' и/или 'order_items'");
+            // Получение данных из БД
             List<Category> categories = categoryDao.getAllCategories();
             int categoriesCount = categories.size();
             LOGGER.info("📦 Категорій отримано: " + categoriesCount);
@@ -104,6 +116,7 @@ public class HomeServlet extends HttpServlet {
             int productsCount = products.size();
             LOGGER.info("🛍️ Продуктів отримано: " + productsCount);
 
+            // Получение настроек из конфигурации
             int lifetime = configService.getInt("jwt.lifetime");
             String db = configService.getString("db.MySql.dbms");
             String host = configService.getString("db.MySql.host");
@@ -111,23 +124,29 @@ public class HomeServlet extends HttpServlet {
 
             LOGGER.info("⚙️ Конфіг: jwt.lifetime=" + lifetime + ", db=" + db + ", host=" + host + ", storagePath=" + storagePath);
 
+            // Генерация случайных данных
             int randomNumber = randomService.randomInt();
             String randomString = randomService.randomString(9);
             String randomFileName = randomService.randomFileName(12);
             String hashedMessage = kdfService.dk("123", "456");
 
-            LOGGER.info("🔐 Згенеровано випадкові дані: number=" + randomNumber + ", string=" + randomString + ", fileName=" + randomFileName);
+            LOGGER.info("🔐 Згенеровано випадкові дані: number=" + randomNumber +
+                    ", string=" + randomString +
+                    ", fileName=" + randomFileName);
 
+            // Получение информации из БД
             String currentTime = dataContext.getUserDao().fetchCurrentTime();
             String databases = dataContext.getUserDao().fetchDatabases();
 
             LOGGER.info("🕒 Поточний час БД: " + currentTime);
             LOGGER.info("💾 Бази даних: " + databases);
 
+            // Формирование ответа
             response.put("tablesMessage", tablesCreated ? "✅ Основні таблиці створено" : "❌ Помилка створення основних таблиць");
             response.put("categoriesMessage", categoriesTableCreated ? "✅ Таблиця 'categories' створена" : "❌ Помилка створення 'categories'");
             response.put("productsMessage", productsTableCreated ? "✅ Таблиця 'products' створена" : "❌ Помилка створення 'products'");
-
+            response.put("cartMessage", cartTableCreated ? "✅ Таблиця 'cart' створена" : "❌ Помилка створення 'cart'");
+            response.put("ordersMessage", ordersTablesCreated ? "✅ Таблицы 'orders' и 'order_items' созданы" : "❌ Ошибка создания таблиц заказов");
             response.put("categoriesCount", categoriesCount);
             response.put("productsCount", productsCount);
 

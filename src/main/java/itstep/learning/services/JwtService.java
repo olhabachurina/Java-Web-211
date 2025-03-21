@@ -44,7 +44,9 @@ public class JwtService {
         this.tokenLifetime = configService.getInt("jwt.lifetime");
         LOGGER.info("Час життя JWT встановлено: " + tokenLifetime + " секунд");
     }
-
+    public boolean validateToken(String token) {
+        return fromJwt(token) != null;
+    }
     /**
      * Створює JWT з довільного об'єкта payload.
      *

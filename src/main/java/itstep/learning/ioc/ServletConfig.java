@@ -1,6 +1,7 @@
 package itstep.learning.ioc;
 import com.google.inject.servlet.ServletModule;
 
+import itstep.learning.filters.CharsetFilter;
 import itstep.learning.servlets.*;
 
 public class ServletConfig extends ServletModule {
@@ -17,7 +18,8 @@ public class ServletConfig extends ServletModule {
         serve("/categories").with(ProductServlet.class);
 
         serve("/storage/*").with(StorageServlet.class);
-
+        serve("/carts/*").with(CartServlet.class);
+        serve("/orders/*").with(OrdersServlet.class);
     }
 }
 

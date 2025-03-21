@@ -1,11 +1,8 @@
 package itstep.learning.ioc;
 import com.google.inject.AbstractModule;
 import com.google.inject.Singleton;
-import itstep.learning.dal.dao.AccessTokenDao;
+import itstep.learning.dal.dao.*;
 
-import itstep.learning.dal.dao.CategoryDao;
-import itstep.learning.dal.dao.DataContext;
-import itstep.learning.dal.dao.ProductDao;
 import itstep.learning.services.DbService.DbService;
 import itstep.learning.services.DbService.MySqlDbService;
 import itstep.learning.services.JwtService;
@@ -39,6 +36,9 @@ public class ServiceConfig extends AbstractModule {
         bind(StorageService.class).to(DiskStorageService.class);
         bind(CategoryDao.class).in(Singleton.class);
         bind(ProductDao.class).in(Singleton.class);
+        bind(CartDao.class).in(Singleton.class);
+        bind(OrdersDao.class).in(Singleton.class);
+
     }
 }
 
